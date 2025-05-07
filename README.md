@@ -1,3 +1,12 @@
+Hosted on vercel.
+ToDo
+1. setup things that differentiate changes made in the list
+2. store data if list has been changed on coles site. ( function should run daily 1 time.)
+3. verify if functin is working and scraping or not.
+4. make 2 environments after basic implemmentation is done.
+5. make email list working/ chcek supabase for this as well.
+6. verify which services we can use for email - do not need domain for that 
+
 # Welcome to your Lovable project
 
 ## Project info
