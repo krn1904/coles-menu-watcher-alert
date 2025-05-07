@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -6,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
+import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 
 const categories = [
   { id: "groceries", label: "Groceries" },
@@ -52,20 +53,19 @@ const SubscriptionForm: React.FC = () => {
 
     setIsSubmitting(true);
     
-    // Simulate API call
     try {
-      // In a real app, this would be an API call to your backend
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      const { error } = await supabase.from("subscriptions").insert([
+        {
+          email,
+          categories: selectedCategories.length > 0 ? selectedCategories : null,
+          min_discount: minDiscount,
+        }
+      ]);
+      if (error) throw error;
+
       toast({
         title: "Subscription Successful!",
         description: "You'll receive alerts when new deals matching your preferences become available.",
-      });
-      
-      console.log("Subscription data:", {
-        email,
-        categories: selectedCategories.length > 0 ? selectedCategories : 'all',
-        minDiscount
       });
       
       // Reset form
