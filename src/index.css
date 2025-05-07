@@ -110,7 +110,8 @@
     @apply w-2 h-2 rounded-full bg-yellow-400 mr-1;
   }
 
-  .deal-badge {
-    @apply absolute -top-2 -right-2 bg-coles-red text-white text-xs font-bold px-2 py-1 rounded-full;
+  .deal-badge {  
+    @apply absolute -top-0 -right-0 bg-coles-red text-white text-xs font-bold px-2 py-1 rounded-full;
+
   }
 }
