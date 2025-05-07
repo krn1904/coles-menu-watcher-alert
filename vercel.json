@@ -1,0 +1,9 @@
+{
+    "crons": [
+      {
+        "path": "/api/coles-scraper",
+        "schedule": "0 5 * * *"
+      }
+    ]
+  }
+  
