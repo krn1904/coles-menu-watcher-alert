@@ -3,6 +3,7 @@ name: Daily Coles Scraper
 on:
   schedule:
     - cron: '0 8 * * *'  # Runs every day at 8am UTC
+  workflow_dispatch:
 
 jobs:
   trigger:
