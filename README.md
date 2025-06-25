@@ -7,6 +7,41 @@ ToDo
 5. make email list working/ chcek supabase for this as well.
 6. verify which services we can use for email - do not need domain for that 
 
+New
+Deploy your function to Supabase. - done
+Set up a GitHub Actions workflow to trigger the function daily. - done
+Ensure your frontend lists deals from Supabase.
+Make sure your function sends emails only when new deals are found.
+Test the full flow: scrape → update DB → send email → frontend shows new deals.
+
+# Coles Menu Watcher & Alert
+
+## What is Implemented
+
+- **Supabase Edge Function Scraper**: Scrapes Coles half-price deals and inserts/updates them in the Supabase `deals` table.
+- **Daily Scheduling**: GitHub Actions workflow triggers the scraper function every day at 8am UTC.
+- **Frontend Deal Listing**: React frontend fetches and displays the latest deals from Supabase.
+- **Subscription Form**: Users can subscribe with their email, categories, and minimum discount (saved to `subscriptions` table). - verify this
+
+
+## What is NOT Implemented Yet
+
+- **Basic Email Notification Logic**: The backend can send emails to all subscribers when new deals are found (or always, for testing).
+    - Need one email/domain to setup and test this. working around for free hosting sites which we can use or last option to purchase something to live this website.
+- **Category/Discount Filtering in Emails**: Subscribers do not yet receive personalized emails based on their preferences.
+- **Unsubscribe Functionality**: No way for users to unsubscribe from email alerts.
+- **Production Email Sending**: Resend requires a custom domain for production. For dev/testing, use SendGrid or Mailgun as described in the docs.
+- **Robust Error Handling & Monitoring**: No advanced error reporting or alerting is set up.
+
+## Testing Notes
+
+- The Edge Function was temporarily set to always send emails for testing (`const hasNewDeals = true;`).
+- **Remember to revert this line to its original logic** after testing:
+  ```ts
+  // const hasNewDeals = inserted > 0;
+  const hasNewDeals = true; // TEMP: Always send emails for testing
+  ```
+
 # Welcome to your Lovable project
 
 ## Project info
