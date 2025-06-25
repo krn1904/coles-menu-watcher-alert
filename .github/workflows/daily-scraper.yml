@@ -1,0 +1,16 @@
+name: Daily Coles Scraper
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Runs every day at 8am UTC
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Supabase Edge Function
+        run: |
+          curl -X POST "https://cbexfvwjxvwcnorbpjkg.supabase.co/functions/v1/coles-scraper" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            --data '{"name":"Functions"}' 
