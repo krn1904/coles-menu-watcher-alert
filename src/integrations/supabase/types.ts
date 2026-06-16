@@ -18,7 +18,11 @@ export type Database = {
           image_url: string | null
           name: string
           original_price: number
+          product_id: string | null
           sale_price: number
+          store: string | null
+          updated_at: string | null
+          week_start: string | null
         }
         Insert: {
           category?: string | null
@@ -28,7 +32,11 @@ export type Database = {
           image_url?: string | null
           name: string
           original_price: number
+          product_id?: string | null
           sale_price: number
+          store?: string | null
+          updated_at?: string | null
+          week_start?: string | null
         }
         Update: {
           category?: string | null
@@ -38,7 +46,38 @@ export type Database = {
           image_url?: string | null
           name?: string
           original_price?: number
+          product_id?: string | null
           sale_price?: number
+          store?: string | null
+          updated_at?: string | null
+          week_start?: string | null
+        }
+        Relationships: []
+      }
+      fetch_logs: {
+        Row: {
+          created_at: string | null
+          data: Json | null
+          id: string
+          message: string | null
+          store: string
+          success: boolean
+        }
+        Insert: {
+          created_at?: string | null
+          data?: Json | null
+          id?: string
+          message?: string | null
+          store: string
+          success: boolean
+        }
+        Update: {
+          created_at?: string | null
+          data?: Json | null
+          id?: string
+          message?: string | null
+          store?: string
+          success?: boolean
         }
         Relationships: []
       }

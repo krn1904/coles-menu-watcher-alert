@@ -21,8 +21,8 @@ const Index: React.FC = () => {
                   Never Miss a <span className="text-coles-red">Half Price</span> Deal Again
                 </h1>
                 <p className="text-lg text-gray-700 mb-8">
-                  Get notified about Coles' half price specials as soon as they're available.
-                  We'll email you when items matching your preferences go on sale.
+                  Get notified about Coles and Woolworths half price specials as soon as
+                  they're available. We'll email you when items matching your preferences go on sale.
                 </p>
                 <a 
                   href="#subscribe" 
@@ -75,7 +75,7 @@ const Index: React.FC = () => {
                 </div>
                 <h3 className="text-xl font-semibold mb-3">We Monitor</h3>
                 <p className="text-gray-600">
-                  Our system constantly checks Coles for new half-price specials matching your criteria.
+                  Our system checks Coles and Woolworths daily for new half-price specials matching your criteria.
                 </p>
               </div>
               <div className="flex flex-col items-center text-center">
@@ -103,7 +103,7 @@ const Index: React.FC = () => {
           <div className="container mx-auto px-4">
             <h2 className="text-3xl font-bold text-center mb-4">Subscribe for Alerts</h2>
             <p className="text-center text-gray-600 max-w-2xl mx-auto mb-8">
-              Enter your email to receive notifications when Coles adds new items to their half-price specials. 
+              Enter your email to receive notifications when Coles or Woolworths add new items to their half-price specials.
               Customize your alert preferences to get only the deals you care about.
             </p>
             <SubscriptionForm />

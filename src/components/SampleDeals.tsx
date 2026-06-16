@@ -19,7 +19,14 @@ const DealCard: React.FC<{ deal: Deal }> = ({ deal }) => (
       />
     </div>
     <CardContent className="p-4">
-      <div className="text-xs text-gray-500 mb-1">{deal.category}</div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-gray-500">{deal.category}</span>
+        {deal.store && (
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+            {deal.store}
+          </span>
+        )}
+      </div>
       <h3 className="font-medium line-clamp-2">{deal.name}</h3>
       <div className="mt-2 flex items-center justify-between">
         <div className="flex flex-col">
@@ -86,8 +93,13 @@ const SampleDeals: React.FC = () => {
     <div>
       <h2 className="text-2xl font-bold mb-6">Half-Price Deals</h2>
       <p className="text-gray-600 mb-8">
-        Here are the latest half-price deals from Coles:
+        Here are the latest half-price deals from Coles and Woolworths:
       </p>
+      {!loading && deals.length === 0 && (
+        <p className="text-gray-500 mb-8">
+          No deals yet — they'll appear here after the next scrape runs.
+        </p>
+      )}
       {loading ? (
         <div>Loading...</div>
       ) : (
