@@ -1,52 +1,110 @@
-Hosted on vercel.
-ToDo
-1. setup things that differentiate changes made in the list
-2. store data if list has been changed on coles site. ( function should run daily 1 time.)
-3. verify if functin is working and scraping or not.
-4. make 2 environments after basic implemmentation is done.
-5. make email list working/ chcek supabase for this as well.
-6. verify which services we can use for email - do not need domain for that 
+# Coles & Woolworths Half-Price Watcher
 
-New
-Deploy your function to Supabase. - done
-Set up a GitHub Actions workflow to trigger the function daily. - done
-Ensure your frontend lists deals from Supabase.
-Make sure your function sends emails only when new deals are found.
-Test the full flow: scrape → update DB → send email → frontend shows new deals.
+Watches Coles and Woolworths for half-price specials, stores them in Supabase, shows
+them on a React frontend, and emails subscribers (via Brevo) when new deals appear.
 
-# Coles Menu Watcher & Alert
+## Architecture
 
-## What is Implemented
+```
+GitHub Actions (daily) ──► woolworths-scraper ─┐
+                       ──► coles-scraper ──────┼─► Supabase `deals` table ──► React frontend
+                       ──► send-deal-alerts ───┘                         └─► Brevo email to subscribers
+```
 
-- **Supabase Edge Function Scraper**: Scrapes Coles half-price deals and inserts/updates them in the Supabase `deals` table.
-- **Daily Scheduling**: GitHub Actions workflow triggers the scraper function every day at 8am UTC.
-- **Frontend Deal Listing**: React frontend fetches and displays the latest deals from Supabase.
-- **Subscription Form**: Users can subscribe with their email, categories, and minimum discount (saved to `subscriptions` table). - verify this
+Supabase Edge Functions (in `supabase/functions/`):
 
+- **coles-scraper** (cloud, runs on Supabase Edge) — pulls Coles half-price specials by parsing the page's `__NEXT_DATA__`. Works from the datacenter edge IP without a proxy; if Coles ever starts challenging the edge IP, set `SCRAPER_PROXY_URL` and it will fall back to it automatically.
+- **woolworths-scraper** (cloud, currently blocked) — same logic as the local script below, but Woolworths' Akamai-protected `browse/category` API returns HTTP 403 to datacenter IPs (Supabase Edge / GitHub Actions) and won't clear even via free-tier proxies. Kept for the day a paid residential/anti-bot proxy is configured (`SCRAPER_PROXY_URL` with ScraperAPI `ultra_premium=true` or similar).
+- **`scripts/scrape-woolworths.mjs`** (local, **this is what actually populates Woolworths**) — runs on an Australian residential IP (your machine), where the Woolworths API works flawlessly. Primes session cookies, discovers the half-price specials group, paginates the `browse/category` API, and upserts straight to Supabase with the service role key. Run with `npm run scrape:woolies`.
+- **send-deal-alerts** — emails subscribers about deals first seen since the last run, filtered by each subscriber's categories and minimum discount.
+- **_shared/deals.ts** — shared upsert/logging helpers. `created_at` is preserved across re-scrapes so it stays a true "first seen" time for new-deal detection.
 
-## What is NOT Implemented Yet
+## Setup
 
-- **Basic Email Notification Logic**: The backend can send emails to all subscribers when new deals are found (or always, for testing).
-    - Need one email/domain to setup and test this. working around for free hosting sites which we can use or last option to purchase something to live this website.
-- **Category/Discount Filtering in Emails**: Subscribers do not yet receive personalized emails based on their preferences.
-- **Unsubscribe Functionality**: No way for users to unsubscribe from email alerts.
-- **Production Email Sending**: Resend requires a custom domain for production. For dev/testing, use SendGrid or Mailgun as described in the docs.
-- **Robust Error Handling & Monitoring**: No advanced error reporting or alerting is set up.
+### 1. Frontend env (required)
 
-## Testing Notes
+Copy `.env.example` to `.env.local` and fill in your Supabase anon public key
+(Dashboard → Project Settings → API → "anon public"). On Vercel, set the same
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` env vars and redeploy.
 
-- The Edge Function was temporarily set to always send emails for testing (`const hasNewDeals = true;`).
-- **Remember to revert this line to its original logic** after testing:
-  ```ts
-  // const hasNewDeals = inserted > 0;
-  const hasNewDeals = true; // TEMP: Always send emails for testing
-  ```
+### 2. Apply migrations & deploy functions
+
+```sh
+supabase db push                       # applies migrations (deals columns + unique index, fetch_logs)
+supabase functions deploy woolworths-scraper
+supabase functions deploy coles-scraper
+supabase functions deploy send-deal-alerts
+```
+
+### 3. Function secrets (Supabase → Edge Functions → Secrets)
+
+- `BREVO_API_KEY` — from Brevo → SMTP & API → API Keys (free tier: 300 emails/day).
+- `BREVO_SENDER_EMAIL` — a sender address verified in Brevo (a personal Gmail works; **no domain required**).
+- `BREVO_SENDER_NAME` — optional display name.
+- `SCRAPER_PROXY_URL` — **needed for Woolworths** (its API returns HTTP 403 to datacenter IPs). A proxy template where `{url}` is replaced with the encoded target and, optionally, `{session}` with a sticky-session id (so cookie priming survives across requests). Examples:
+  - ScraperAPI: `https://api.scraperapi.com/?api_key=YOUR_KEY&country_code=au&keep_headers=true&url={url}`
+  - ScrapingBee: `https://app.scrapingbee.com/api/v1/?api_key=YOUR_KEY&forward_headers=true&country_code=au&url={url}`
+  Use an AU-geolocated proxy. Coles does **not** need this today (it works from the edge IP), but will use the proxy automatically if set.
+- `WOW_MAX_PAGES` — optional, caps Woolworths pagination (36 items/page). Default `15`.
+
+Set them all at once from `supabase/.env.local`:
+
+```sh
+supabase secrets set --env-file supabase/.env.local
+```
+
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically by Supabase.
+
+### 4. GitHub Actions secret
+
+Add repo secret `SUPABASE_ANON_KEY` (Settings → Secrets and variables → Actions). The
+daily workflow (`.github/workflows/daily-scraper.yml`, 19:00 UTC) runs both scrapers
+then the email alerts. `workflow_dispatch` lets you trigger it manually.
+
+### 5. Woolworths (run locally)
+
+Woolworths' API blocks datacenter IPs, so scrape it from your (Australian) machine
+and let it push to Supabase. It reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`
+from `supabase/.env.local`:
+
+```sh
+npm run scrape:woolies
+```
+
+It prints per-page progress and upserts ~500+ half-price deals. AU supermarket
+specials run Wednesday→Tuesday, so running it once each Wednesday is enough. To
+automate it on macOS, schedule the command with `launchd`/`cron` (ask if you want
+a ready-made `launchd` plist). Coles continues to run daily in the cloud.
+
+## Testing the flow
+
+```sh
+# Trigger scrapers manually
+curl -X POST "https://cbexfvwjxvwcnorbpjkg.supabase.co/functions/v1/woolworths-scraper" \
+  -H "Authorization: Bearer <anon-key>" -H "Content-Type: application/json" --data '{}'
+curl -X POST "https://cbexfvwjxvwcnorbpjkg.supabase.co/functions/v1/coles-scraper" \
+  -H "Authorization: Bearer <anon-key>" -H "Content-Type: application/json" --data '{}'
+
+# Send yourself a test email (latest deals, ignores the "new since" window)
+curl -X POST "https://cbexfvwjxvwcnorbpjkg.supabase.co/functions/v1/send-deal-alerts" \
+  -H "Authorization: Bearer <anon-key>" -H "Content-Type: application/json" \
+  --data '{"testEmail":"you@example.com"}'
+```
+
+Each function returns JSON: `success`, `store`, `fetched`, `inserted`, `updated`, `errors`.
+Check the `fetch_logs` table for a history of every run.
+
+## Known limitations
+
+- **Woolworths runs locally**, not in the cloud — its Akamai-protected API returns HTTP 403 to datacenter IPs and won't clear even via free-tier proxies. Run `npm run scrape:woolies` from an AU residential IP. (A paid residential/anti-bot proxy would let the cloud `woolworths-scraper` function work too.)
+- **Legacy data** — the `deals` table contains ~20k legacy `woolworths` rows (`product_id` like `legacy_%`, from the initial migration, dated 2025). Consider deleting them so the frontend only shows current specials: `delete from deals where product_id like 'legacy_%';`
+- **No unsubscribe link yet** — would need an `unsubscribe` token + a small public route.
 
 # Welcome to your Lovable project
 
 ## Project info
 
-**URL**: https://lovable.dev/projects/5cdc70cc-91d3-4265-bfe0-26cb3df60fdc
+**URL**: [https://lovable.dev/projects/5cdc70cc-91d3-4265-bfe0-26cb3df60fdc](https://lovable.dev/projects/5cdc70cc-91d3-4265-bfe0-26cb3df60fdc)
 
 ## How can I edit this code?
 
