@@ -149,10 +149,27 @@ async function fetchBrowsePage(
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  if (!proxyConfigured()) {
+    return jsonResponse(
+      {
+        success: false,
+        store: "woolworths",
+        fetched: 0,
+        inserted: 0,
+        updated: 0,
+        errors: [
+          "SCRAPER_PROXY_URL is required for Woolworths (Akamai blocks datacenter IPs). " +
+            "Set an AU proxy in Supabase secrets, or run `npm run scrape:woolies` in GitHub Actions.",
+        ],
+      },
+      503,
+    );
+  }
+
   const supabase = getServiceClient();
   const weekStart = getWeekStart();
   // Sticky session id only matters when routing through a proxy.
-  const session = proxyConfigured() ? `wow-${Date.now()}` : undefined;
+  const session = `wow-${Date.now()}`;
 
   try {
     const cookie = await primeCookies(session);
@@ -202,9 +219,7 @@ serve(async (req) => {
     }
 
     if (deals.length === 0) {
-      const msg = proxyConfigured()
-        ? "Woolworths returned no half-price specials (check proxy/cookies)."
-        : "Woolworths returned no half-price specials. The datacenter IP is likely blocked — set SCRAPER_PROXY_URL to an AU proxy.";
+      const msg = "Woolworths returned no half-price specials (check proxy/cookies or page shape).";
       await logFetch(supabase, "woolworths", false, msg, { fetched: 0, inserted: 0, updated: 0, errors: [msg] });
       return jsonResponse(
         { success: false, store: "woolworths", fetched: 0, inserted: 0, updated: 0, errors: [msg] },

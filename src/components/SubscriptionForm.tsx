@@ -88,7 +88,7 @@ const SubscriptionForm: React.FC = () => {
       <CardHeader>
         <CardTitle>Subscribe to Deal Alerts</CardTitle>
         <CardDescription>
-          Get notified when items matching your preferences go on sale at Coles.
+          Get notified when items matching your preferences go on sale at Coles and Woolworths.
         </CardDescription>
       </CardHeader>
       <CardContent>

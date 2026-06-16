@@ -6,18 +6,18 @@ them on a React frontend, and emails subscribers (via Brevo) when new deals appe
 ## Architecture
 
 ```
-GitHub Actions (daily) ──► woolworths-scraper ─┐
-                       ──► coles-scraper ──────┼─► Supabase `deals` table ──► React frontend
-                       ──► send-deal-alerts ───┘                         └─► Brevo email to subscribers
+GitHub Actions (daily) ──► scrape-woolworths.mjs (Node + AU proxy) ─┐
+                       ──► coles-scraper (Edge Function) ──────────┼─► Supabase `deals` ──► React frontend
+                       ──► send-deal-alerts ───────────────────────┘                         └─► Brevo email
 ```
 
 Supabase Edge Functions (in `supabase/functions/`):
 
-- **coles-scraper** (cloud, runs on Supabase Edge) — pulls Coles half-price specials by parsing the page's `__NEXT_DATA__`. Works from the datacenter edge IP without a proxy; if Coles ever starts challenging the edge IP, set `SCRAPER_PROXY_URL` and it will fall back to it automatically.
-- **woolworths-scraper** (cloud, currently blocked) — same logic as the local script below, but Woolworths' Akamai-protected `browse/category` API returns HTTP 403 to datacenter IPs (Supabase Edge / GitHub Actions) and won't clear even via free-tier proxies. Kept for the day a paid residential/anti-bot proxy is configured (`SCRAPER_PROXY_URL` with ScraperAPI `ultra_premium=true` or similar).
-- **`scripts/scrape-woolworths.mjs`** (local, **this is what actually populates Woolworths**) — runs on an Australian residential IP (your machine), where the Woolworths API works flawlessly. Primes session cookies, discovers the half-price specials group, paginates the `browse/category` API, and upserts straight to Supabase with the service role key. Run with `npm run scrape:woolies`.
-- **send-deal-alerts** — emails subscribers about deals first seen since the last run, filtered by each subscriber's categories and minimum discount.
-- **_shared/deals.ts** — shared upsert/logging helpers. `created_at` is preserved across re-scrapes so it stays a true "first seen" time for new-deal detection.
+- **coles-scraper** (cloud) — pulls Coles half-price specials by parsing the page's `__NEXT_DATA__`. Works from the datacenter edge IP without a proxy; falls back to `SCRAPER_PROXY_URL` if blocked.
+- **woolworths-scraper** (cloud, optional) — same browse/category API logic as the Node script, but requires `SCRAPER_PROXY_URL` in Supabase secrets (Akamai blocks datacenter IPs).
+- **`scripts/scrape-woolworths.mjs`** (automated via GitHub Actions) — **primary Woolworths path**. Runs daily in CI with `SCRAPER_PROXY_URL` + `SUPABASE_SERVICE_ROLE_KEY` secrets. No manual local runs needed.
+- **send-deal-alerts** — emails subscribers about deals first seen since the last run, filtered by categories and minimum discount (Brevo).
+- **_shared/deals.ts** — shared upsert/logging helpers. `created_at` is preserved across re-scrapes for new-deal detection.
 
 ## Setup
 
@@ -55,26 +55,30 @@ supabase secrets set --env-file supabase/.env.local
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically by Supabase.
 
-### 4. GitHub Actions secret
+### 4. GitHub Actions secrets
 
-Add repo secret `SUPABASE_ANON_KEY` (Settings → Secrets and variables → Actions). The
-daily workflow (`.github/workflows/daily-scraper.yml`, 19:00 UTC) runs both scrapers
-then the email alerts. `workflow_dispatch` lets you trigger it manually.
+Add these repo secrets (Settings → Secrets and variables → Actions):
 
-### 5. Woolworths (run locally)
+| Secret | Purpose |
+|--------|---------|
+| `SUPABASE_ANON_KEY` | Auth header for edge function triggers |
+| `SUPABASE_SERVICE_ROLE_KEY` | Lets the Node Woolworths scraper write to `deals` |
+| `SCRAPER_PROXY_URL` | AU-geolocated proxy for Woolworths (required) |
 
-Woolworths' API blocks datacenter IPs, so scrape it from your (Australian) machine
-and let it push to Supabase. It reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`
-from `supabase/.env.local`:
+The daily workflow (`.github/workflows/daily-scraper.yml`, 19:00 UTC) runs the Woolworths Node scraper (proxied), then Coles edge function, then email alerts. `workflow_dispatch` lets you trigger it manually.
+
+### 5. Woolworths (automated — no local runs)
+
+Woolworths blocks datacenter IPs, so the GitHub Action runs `npm run scrape:woolies` with `SCRAPER_PROXY_URL` and `SUPABASE_SERVICE_ROLE_KEY` from secrets. Configure a ScraperAPI or ScrapingBee AU proxy (see `.env.example`).
+
+To test locally with the same setup:
 
 ```sh
+# In supabase/.env.local set SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SCRAPER_PROXY_URL
 npm run scrape:woolies
 ```
 
-It prints per-page progress and upserts ~500+ half-price deals. AU supermarket
-specials run Wednesday→Tuesday, so running it once each Wednesday is enough. To
-automate it on macOS, schedule the command with `launchd`/`cron` (ask if you want
-a ready-made `launchd` plist). Coles continues to run daily in the cloud.
+AU supermarket specials run Wednesday→Tuesday; the daily cron still catches mid-week updates. Coles runs in the cloud edge function.
 
 ## Testing the flow
 
@@ -96,7 +100,7 @@ Check the `fetch_logs` table for a history of every run.
 
 ## Known limitations
 
-- **Woolworths runs locally**, not in the cloud — its Akamai-protected API returns HTTP 403 to datacenter IPs and won't clear even via free-tier proxies. Run `npm run scrape:woolies` from an AU residential IP. (A paid residential/anti-bot proxy would let the cloud `woolworths-scraper` function work too.)
+- **Woolworths requires an AU proxy** — Akamai blocks datacenter IPs. Set `SCRAPER_PROXY_URL` in GitHub secrets (for CI) and/or Supabase secrets (for the edge function). Free-tier proxies usually fail; ScraperAPI/ScrapingBee AU plans work.
 - **Legacy data** — the `deals` table contains ~20k legacy `woolworths` rows (`product_id` like `legacy_%`, from the initial migration, dated 2025). Consider deleting them so the frontend only shows current specials: `delete from deals where product_id like 'legacy_%';`
 - **No unsubscribe link yet** — would need an `unsubscribe` token + a small public route.
 

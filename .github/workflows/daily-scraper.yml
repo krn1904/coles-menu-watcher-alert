@@ -2,7 +2,8 @@ name: Daily Deal Scraper
 
 on:
   schedule:
-    - cron: '0 19 * * *'  # 19:00 UTC = ~5am AEST, after overnight specials refresh
+    # 19:00 UTC = ~5am AEST — after overnight specials refresh; Wednesdays get fresh Woolworths specials
+    - cron: '0 19 * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,23 +11,50 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PROJECT_REF: cbexfvwjxvwcnorbpjkg
+      SUPABASE_URL: https://cbexfvwjxvwcnorbpjkg.supabase.co
       ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SCRAPER_PROXY_URL: ${{ secrets.SCRAPER_PROXY_URL }}
+      WOW_MAX_PAGES: ${{ vars.WOW_MAX_PAGES || '15' }}
     steps:
-      - name: Scrape Woolworths
-        run: |
-          curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/woolworths-scraper" \
-            -H "Authorization: Bearer ${ANON_KEY}" \
-            -H "Content-Type: application/json" --data '{}' -w "\nHTTP %{http_code}\n"
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Scrape Coles
-        continue-on-error: true  # Coles may be blocked unless SCRAPER_PROXY_URL is configured
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Scrape Woolworths (proxied Node script)
         run: |
-          curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/coles-scraper" \
+          if [[ -z "${SCRAPER_PROXY_URL}" || -z "${SUPABASE_SERVICE_ROLE_KEY}" ]]; then
+            echo "Missing SCRAPER_PROXY_URL or SUPABASE_SERVICE_ROLE_KEY — Woolworths cannot run without an AU proxy."
+            exit 1
+          fi
+          node scripts/scrape-woolworths.mjs
+
+      - name: Scrape Coles (Supabase Edge Function)
+        run: |
+          response=$(curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/coles-scraper" \
             -H "Authorization: Bearer ${ANON_KEY}" \
-            -H "Content-Type: application/json" --data '{}' -w "\nHTTP %{http_code}\n"
+            -H "Content-Type: application/json" --data '{}')
+          echo "$response"
+          echo "$response" | node -e "
+            const r = JSON.parse(require('fs').readFileSync(0,'utf8'));
+            if (!r.success && r.fetched === 0) process.exit(1);
+          "
 
       - name: Send email alerts for new deals
         run: |
-          curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/send-deal-alerts" \
+          response=$(curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/send-deal-alerts" \
             -H "Authorization: Bearer ${ANON_KEY}" \
-            -H "Content-Type: application/json" --data '{}' -w "\nHTTP %{http_code}\n"
+            -H "Content-Type: application/json" --data '{}')
+          echo "$response"
+          echo "$response" | node -e "
+            const r = JSON.parse(require('fs').readFileSync(0,'utf8'));
+            if (!r.success) process.exit(1);
+          "
