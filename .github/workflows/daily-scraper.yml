@@ -1,17 +1,32 @@
-name: Daily Coles Scraper
+name: Daily Deal Scraper
 
 on:
   schedule:
-    - cron: '0 8 * * *'  # Runs every day at 8am UTC
+    - cron: '0 19 * * *'  # 19:00 UTC = ~5am AEST, after overnight specials refresh
   workflow_dispatch:
 
 jobs:
-  trigger:
+  scrape-and-alert:
     runs-on: ubuntu-latest
+    env:
+      PROJECT_REF: cbexfvwjxvwcnorbpjkg
+      ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
     steps:
-      - name: Call Supabase Edge Function
+      - name: Scrape Woolworths
         run: |
-          curl -X POST "https://cbexfvwjxvwcnorbpjkg.supabase.co/functions/v1/coles-scraper" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Content-Type: application/json" \
-            --data '{"name":"Functions"}' 
+          curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/woolworths-scraper" \
+            -H "Authorization: Bearer ${ANON_KEY}" \
+            -H "Content-Type: application/json" --data '{}' -w "\nHTTP %{http_code}\n"
+
+      - name: Scrape Coles
+        continue-on-error: true  # Coles may be blocked unless SCRAPER_PROXY_URL is configured
+        run: |
+          curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/coles-scraper" \
+            -H "Authorization: Bearer ${ANON_KEY}" \
+            -H "Content-Type: application/json" --data '{}' -w "\nHTTP %{http_code}\n"
+
+      - name: Send email alerts for new deals
+        run: |
+          curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/send-deal-alerts" \
+            -H "Authorization: Bearer ${ANON_KEY}" \
+            -H "Content-Type: application/json" --data '{}' -w "\nHTTP %{http_code}\n"
