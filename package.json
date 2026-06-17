@@ -8,7 +8,9 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "scrape:woolies": "node scripts/scrape-woolworths.mjs",
+    "test:apis": "bash scripts/test-apis.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

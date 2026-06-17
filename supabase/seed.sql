@@ -1,0 +1,22 @@
+-- Insert sample deals data
+INSERT INTO deals (name, category, original_price, sale_price, discount_percentage, image_url) VALUES
+  ('Cadbury Dairy Milk Chocolate Block 180g', 'Groceries', 6.00, 3.00, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F436285.jpg&w=500&q=80'),
+  ('Arnott''s Tim Tam Original 200g', 'Groceries', 6.50, 3.25, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9300886000255.jpg&w=500&q=80'),
+  ('Coca-Cola Soft Drink 24x375mL', 'Drinks', 35.00, 17.50, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9310274001253.jpg&w=500&q=80'),
+  ('Smith''s Crinkle Cut Chips Original 170g', 'Groceries', 4.50, 2.25, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9310015008014.jpg&w=500&q=80'),
+  ('Peters Drumstick Variety 8 Pack', 'Frozen', 11.00, 5.50, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9310021004425.jpg&w=500&q=80'),
+  ('Magnum Classic Ice Cream 4 Pack', 'Frozen', 10.00, 5.00, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9310015006539.jpg&w=500&q=80'),
+  ('Philadelphia Original Cream Cheese 250g', 'Dairy', 7.00, 3.50, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F4019400165136.jpg&w=500&q=80'),
+  ('Bega Peanut Butter Smooth 375g', 'Groceries', 6.50, 3.25, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9300722010447.jpg&w=500&q=80'),
+  ('Tip Top The One White Bread 700g', 'Bakery', 4.60, 2.30, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9410077102005.jpg&w=500&q=80'),
+  ('Golden Circle Pineapple Slices 440g', 'Groceries', 3.70, 1.85, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9300698000109.jpg&w=500&q=80'),
+  ('Kellogg''s Corn Flakes 725g', 'Groceries', 7.50, 3.75, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9310015008107.jpg&w=500&q=80'),
+  ('Fountain Tomato Sauce 500mL', 'Groceries', 4.00, 2.00, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9300673004019.jpg&w=500&q=80'),
+  ('OMO Laundry Liquid 2L', 'Groceries', 22.00, 11.00, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9300617187257.jpg&w=500&q=80'),
+  ('McCain Superfries Straight Cut 900g', 'Frozen', 5.50, 2.75, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9300653030009.jpg&w=500&q=80'),
+  ('Lipton Ice Tea Lemon 1.5L', 'Drinks', 4.40, 2.20, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9310060601024.jpg&w=500&q=80'),
+  ('Dairy Farmers Thick & Creamy Vanilla Yoghurt 600g', 'Dairy', 6.50, 3.25, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9300628000147.jpg&w=500&q=80'),
+  ('Connoisseur Ice Cream Vanilla Caramel Brownie 1L', 'Frozen', 11.00, 5.50, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9415005018004.jpg&w=500&q=80'),
+  ('Campbell''s Real Stock Chicken 1L', 'Groceries', 5.00, 2.50, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9310015008152.jpg&w=500&q=80'),
+  ('Birds Eye Fish Fingers 375g', 'Frozen', 7.00, 3.50, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9300492001003.jpg&w=500&q=80'),
+  ('Uncle Tobys Oats Quick Sachets Variety 10 Pack', 'Groceries', 7.50, 3.75, 50, 'https://www.coles.com.au/_next/image?url=https%3A%2F%2Fproductimages.coles.com.au%2Fproductimages%2F5%2F9310015008183.jpg&w=500&q=80');

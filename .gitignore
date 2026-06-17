@@ -11,6 +11,13 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
+
+# Supabase local CLI state (project refs, pooler URLs, branch state)
+supabase/.temp/
+supabase/.branches/
 
 # Editor directories and files
 .vscode/*

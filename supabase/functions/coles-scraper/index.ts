@@ -1,164 +1,168 @@
-// Follow this setup guide to integrate the Deno language server with your editor:
-// https://deno.land/manual/getting_started/setup_your_environment
-// This enables autocomplete, go to definition, etc.
-
-// Setup type definitions for built-in Supabase Runtime APIs
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-// @ts-expect-error: No types for deno_dom WASM in Deno
-import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  BROWSER_HEADERS,
+  corsHeaders,
+  jsonResponse,
+  getServiceClient,
+  getWeekStart,
+  proxiedFetch,
+  proxyConfigured,
+  upsertDeals,
+  logFetch,
+  discountPct,
+  type NormalizedDeal,
+} from "../_shared/deals.ts";
 
-console.log("Hello from Functions!")
+const PAGE_HEADERS = {
+  ...BROWSER_HEADERS,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+};
 
-// Function to scrape data from Coles
-async function scrapeColesData() {
-    const response = await fetch("https://www.coles.com.au/on-special?filter_Special=halfprice&page=1");
-    const html = await response.text();
-    const document = new DOMParser().parseFromString(html, "text/html");
+// Recursively walk parsed JSON looking for Coles product objects. Coles product
+// nodes look like { _type:'PRODUCT', name, brand, pricing:{ now, was }, ... }.
+// Walking defensively keeps the scraper working across minor shape changes.
+type ColesProduct = {
+  name?: string;
+  brand?: string;
+  pricing?: { now?: number; was?: number; saveStatement?: string };
+  imageUris?: Array<{ uri?: string; altText?: string }>;
+  id?: string | number;
+  productId?: string | number;
+};
 
-    // Extract product data
-    const products = Array.from(document.querySelectorAll('section[data-testid="product-tile"]')).map(product => {
-        const p = product as Element; // Type assertion to fix linter error
-        const title = p.querySelector('.product__title')?.textContent;
-        const price = p.querySelector('[data-testid="product-pricing"]')?.textContent;
-        const imageUrl = p.querySelector('img[data-testid="product-image"]')?.getAttribute('src');
-
-        return { title, price, imageUrl };
-    });
-
-    return products;
+function collectProducts(node: unknown, out: ColesProduct[], seen = new Set<unknown>()): void {
+  if (!node || typeof node !== "object" || seen.has(node)) return;
+  seen.add(node);
+  const obj = node as Record<string, unknown>;
+  const pricing = obj.pricing as ColesProduct["pricing"] | undefined;
+  if (typeof obj.name === "string" && pricing && typeof pricing.now === "number") {
+    out.push(obj as ColesProduct);
+  }
+  for (const v of Object.values(obj)) {
+    if (Array.isArray(v)) v.forEach((item) => collectProducts(item, out, seen));
+    else if (v && typeof v === "object") collectProducts(v, out, seen);
+  }
 }
 
-// Main handler function
-export default async function handler(req, res) {
-    const supabaseUrl = process.env.SUPABASE_URL!;
-    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+// Find the product-image CDN base ("assetsUrl") anywhere in the parsed page data.
+function findAssetsUrl(node: unknown, seen = new Set<unknown>()): string | null {
+  if (!node || typeof node !== "object" || seen.has(node)) return null;
+  seen.add(node);
+  const obj = node as Record<string, unknown>;
+  if (typeof obj.assetsUrl === "string" && obj.assetsUrl.includes("productimages")) {
+    return obj.assetsUrl;
+  }
+  for (const v of Object.values(obj)) {
+    const found = findAssetsUrl(v, seen);
+    if (found) return found;
+  }
+  return null;
+}
 
-    // Scrape new data
-    const newDeals = await scrapeColesData();
-
-    // Check for existing deals in Supabase
-    const { data: existingDeals, error } = await supabase
-        .from('deals')
-        .select('*');
-
-    if (error) {
-        console.error('Error fetching existing deals:', error);
-        return res.status(500).json({ error: 'Error fetching existing deals' });
-    }
-
-    // Compare new deals with existing deals
-    const hasNewDeals = newDeals.some(newDeal => 
-        !existingDeals.some(existingDeal => existingDeal.title === newDeal.title)
-    );
-
-    if (hasNewDeals) {
-        // Insert new deals into Supabase
-        await supabase.from('deals').insert(newDeals);
-        console.log('New deals added:', newDeals);
-        return res.status(200).json({ message: 'New deals added', deals: newDeals });
-    } else {
-        console.log('No new deals found.');
-        return res.status(200).json({ message: 'No new deals found' });
-    }
+function extractNextData(html: string): unknown | null {
+  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!m) return null;
+  try {
+    return JSON.parse(m[1]);
+  } catch {
+    return null;
+  }
 }
 
 serve(async (req) => {
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  // Fetch Coles half-price page
-  const res = await fetch("https://www.coles.com.au/on-special?filter_Special=halfprice&page=1&pid=homepage_herotile_halfprice");
-  const html = await res.text();
+  const supabase = getServiceClient();
+  const weekStart = getWeekStart();
 
-  // Parse HTML
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  if (!doc) return new Response("Failed to parse HTML", { status: 500 });
+  try {
+    // Coles "Half Price" specials search page (server-rendered with __NEXT_DATA__).
+    // Coles works from the edge IP directly, so we fetch direct first and only
+    // fall back to the proxy (if configured) when the direct response looks
+    // blocked. This keeps proxy credits for Woolworths, which actually needs them.
+    const target = "https://www.coles.com.au/on-special?filter_Special=halfprice";
 
-  // Select all product tiles
-  const products = doc.querySelectorAll('section[data-testid="product-tile"]');
-
-  let inserted = 0;
-  for (const el of products) {
-    const name = el.querySelector('.product__title')?.textContent.trim() ?? "";
-
-    let imageUrl = el.querySelector('img[data-testid="product-image"]')?.getAttribute('src') ?? "";
-    if (imageUrl && imageUrl.startsWith("/")) {
-      imageUrl = "https://www.coles.com.au" + imageUrl;
+    let nextData: unknown | null = null;
+    let lastHtml = "";
+    const useProxyOptions = proxyConfigured() ? [false, true] : [false];
+    for (const useProxy of useProxyOptions) {
+      const res = useProxy
+        ? await proxiedFetch(target, { headers: PAGE_HEADERS })
+        : await fetch(target, { headers: PAGE_HEADERS });
+      lastHtml = await res.text();
+      if (!res.ok) continue;
+      // The real page embeds product data in __NEXT_DATA__. Note: a legitimate
+      // Coles page also references "_Incapsula_Resource" in a script tag, so the
+      // presence of that string is NOT a reliable block signal.
+      nextData = extractNextData(lastHtml);
+      if (nextData) break;
     }
 
-    const salePriceText = el.querySelector('span.price__value[data-testid="product-pricing"]')?.textContent ?? "";
-    const salePrice = parseFloat(salePriceText.replace(/[^0-9.]/g, "")) || 0;
+    if (!nextData) {
+      const challenged = /Request unsuccessful|Incapsula incident|incident ID/i.test(lastHtml);
+      throw new Error(
+        challenged || !proxyConfigured()
+          ? "Blocked by Coles anti-bot (Incapsula). Set SCRAPER_PROXY_URL to an AU rendering proxy to enable Coles ingestion."
+          : "Could not locate __NEXT_DATA__ in Coles response (page shape changed).",
+      );
+    }
 
-    const wasText = el.querySelector('.price__was')?.textContent ?? "";
-    const originalPriceMatch = wasText.match(/\$([0-9.]+)/);
-    const originalPrice = originalPriceMatch ? parseFloat(originalPriceMatch[1]) : 0;
+    const products: ColesProduct[] = [];
+    collectProducts(nextData, products);
 
-    const discountPercentage = originalPrice && salePrice
-      ? Math.round(((originalPrice - salePrice) / originalPrice) * 100)
-      : 50;
+    // Coles serves product images from a CDN, exposed as "assetsUrl" in the
+    // page data (e.g. https://cdn.productimages.coles.com.au/productimages).
+    // imageUris hold relative paths like "/1/1251527.jpg".
+    const assetsUrl = findAssetsUrl(nextData) || "https://cdn.productimages.coles.com.au/productimages";
 
-    if (!name || !salePrice) continue;
+    const deals: NormalizedDeal[] = [];
+    for (const p of products) {
+      const sale = Number(p.pricing?.now || 0);
+      const was = Number(p.pricing?.was || 0);
+      if (!sale) continue;
+      // Keep only genuine half-price-ish specials.
+      if (!was || was <= sale) continue;
 
-    const { error } = await supabase.from("deals").upsert([
-      {
+      const name = [p.brand, p.name].filter(Boolean).join(" ").trim() || (p.name ?? "").trim();
+      const productId = String(p.id ?? p.productId ?? name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+      const img = p.imageUris?.find((i) => i.uri)?.uri || "";
+      const imageUrl = !img
+        ? ""
+        : img.startsWith("http")
+        ? img
+        : `${assetsUrl}${img.startsWith("/") ? "" : "/"}${img}`;
+      deals.push({
         name,
-        original_price: originalPrice,
-        sale_price: salePrice,
+        category: "Groceries",
+        original_price: was,
+        sale_price: sale,
+        discount_percentage: discountPct(was, sale),
         image_url: imageUrl,
-        category: "", // Enhance if you find a category field
-        discount_percentage: discountPercentage
-      }
-    ]);
-    if (!error) inserted++;
-  }
+        store: "coles",
+        product_id: productId,
+      });
+    }
 
-  // Check for new deals in Supabase
-  const { data: existingDeals, error: existingDealsError } = await supabase
-    .from('deals')
-    .select('*');
-
-  if (existingDealsError) {
-    console.error('Error fetching existing deals:', existingDealsError);
-    return new Response(`Scraping complete! Inserted/updated: ${inserted}`, { status: 500 });
-  }
-
-  // Compare newDeals with existingDeals
-  const hasNewDeals = inserted > 0;
-
-  if (hasNewDeals) {
-    // Send email notification using Resend API
-    // TODO: Set RESEND_API_KEY in your environment and update the 'from' and 'to' addresses below
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${Deno.env.get("RESEND_API_KEY")}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: "karanssoni2002@gmail.com", // TODO: Replace with your verified sender
-        to: "190320116069.it.karan.soni@email.com", // TODO: Replace with recipient
-        subject: "New Deals Available!",
-        text: "New deals have been added..."
-      })
+    const { inserted, updated, errors } = await upsertDeals(supabase, deals, weekStart);
+    const message = `Coles: fetched ${deals.length}, inserted ${inserted}, updated ${updated}, failed ${errors.length}`;
+    await logFetch(supabase, "coles", errors.length === 0, message, {
+      fetched: deals.length,
+      inserted,
+      updated,
+      errors,
     });
+
+    return jsonResponse(
+      { success: errors.length === 0, store: "coles", fetched: deals.length, inserted, updated, errors },
+      errors.length === 0 ? 200 : 207,
+    );
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown Coles scraper error";
+    await logFetch(supabase, "coles", false, msg, { fetched: 0, inserted: 0, updated: 0, errors: [msg] });
+    return jsonResponse(
+      { success: false, store: "coles", fetched: 0, inserted: 0, updated: 0, errors: [msg] },
+      502,
+    );
   }
-
-  return new Response(`Scraping complete! Inserted/updated: ${inserted}`);
-})
-
-/* To invoke locally:
-
-  1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
-  2. Make an HTTP request:
-
-  curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/coles-scraper' \
-    --header 'Authorization: Bearer <your-key>' \
-    --header 'Content-Type: application/json' \
-    --data '{"name":"Functions"}'
-
-*/
+});

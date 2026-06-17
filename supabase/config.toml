@@ -1,1 +1,22 @@
-project_id = "grucurxwffhskqzbcodo"
+project_id = "cbexfvwjxvwcnorbpjkg"
+
+[functions.coles-scraper]
+enabled = true
+verify_jwt = true
+import_map = "./functions/coles-scraper/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/coles-scraper/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/coles-scraper/*.html" ]
+
+[functions.woolworths-scraper]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/woolworths-scraper/index.ts"
+
+[functions.send-deal-alerts]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/send-deal-alerts/index.ts"
