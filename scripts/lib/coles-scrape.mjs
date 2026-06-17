@@ -143,7 +143,7 @@ async function fetchHalfPricePage(page, env, session) {
   return { html: lastHtml, ok: false };
 }
 
-export async function scrapeColesHalfPrice(env, { maxPages = 25, pageDelayMs = 250, onPage } = {}) {
+export async function scrapeColesHalfPrice(env, { maxPages = 35, pageDelayMs = 250, onPage } = {}) {
   if (!proxyConfigured(env)) {
     throw new Error(
       "SCRAPER_PROXY_URL is required for Coles (Incapsula blocks datacenter IPs). " +
@@ -186,6 +186,7 @@ export async function scrapeColesHalfPrice(env, { maxPages = 25, pageDelayMs = 2
     }
 
     onPage?.(page, added, rawProducts.length, reportedTotal);
+    if (reportedTotal != null && rawProducts.length >= reportedTotal) break;
     if (page < maxPages && pageDelayMs > 0) await sleep(pageDelayMs);
   }
 
@@ -208,5 +209,11 @@ export async function scrapeColesHalfPrice(env, { maxPages = 25, pageDelayMs = 2
     throw new Error("No half-price specials parsed (page shape changed or proxy blocked).");
   }
 
-  return { deals, pagesFetched, reportedTotal, fetched: deals.length };
+  return {
+    deals,
+    pagesFetched,
+    reportedTotal,
+    fetched: deals.length,
+    truncated: reportedTotal != null && rawProducts.length < reportedTotal,
+  };
 }

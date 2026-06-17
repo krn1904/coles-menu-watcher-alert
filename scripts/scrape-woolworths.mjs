@@ -10,7 +10,7 @@
 // Env (read from supabase/.env.local, or the real environment):
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   (required)
 //   SCRAPER_PROXY_URL                         (required)
-//   WOW_MAX_PAGES                             (optional, default 15)
+//   WOW_MAX_PAGES                             (optional, default 60)
 //   MIN_WOOLWORTHS_DEALS                      (optional, default 10)
 
 import { readFileSync } from "node:fs";
@@ -96,20 +96,26 @@ async function main() {
     process.exit(1);
   }
 
-  const maxPages = Number(env.WOW_MAX_PAGES || "15");
+  const maxPages = Number(env.WOW_MAX_PAGES || "60");
   const minDeals = Number(env.MIN_WOOLWORTHS_DEALS || "10");
   const supabase = createClient(url, key);
   const weekStart = getWeekStart();
 
   let result;
   try {
-    const { deals, categoryId } = await scrapeWoolworthsHalfPrice(env, {
+    const { deals, categoryId, reportedTotal, rawCount, truncated } = await scrapeWoolworthsHalfPrice(env, {
       maxPages,
       onPage: (page, count, total, expected) => {
         process.stdout.write(`  page ${page}: +${count} (total ${total}/${expected})\n`);
       },
     });
     console.log(`Half-price category: ${categoryId}`);
+
+    if (truncated) {
+      console.warn(
+        `Woolworths: stopped at ${rawCount} products (${deals.length} deals) before reported total ${reportedTotal} (raise WOW_MAX_PAGES, currently ${maxPages}).`,
+      );
+    }
 
     if (deals.length < minDeals) {
       throw new Error(`Woolworths fetched too few deals (${deals.length} < ${minDeals}).`);

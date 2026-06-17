@@ -10,7 +10,7 @@
 // Env (read from supabase/.env.local, or the real environment):
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   (required)
 //   SCRAPER_PROXY_URL                         (required)
-//   COLES_MAX_PAGES                           (optional, default 25)
+//   COLES_MAX_PAGES                           (optional, default 35)
 //   COLES_PAGE_DELAY_MS                       (optional, default 250)
 //   MIN_COLES_DEALS                           (optional, default 40)
 
@@ -97,7 +97,7 @@ async function main() {
     process.exit(1);
   }
 
-  const maxPages = Number(env.COLES_MAX_PAGES || "25");
+  const maxPages = Number(env.COLES_MAX_PAGES || "35");
   const pageDelayMs = Number(env.COLES_PAGE_DELAY_MS || "250");
   const minDeals = Number(env.MIN_COLES_DEALS || "40");
   const supabase = createClient(url, key);
@@ -105,7 +105,7 @@ async function main() {
 
   let result;
   try {
-    const { deals, pagesFetched, reportedTotal } = await scrapeColesHalfPrice(env, {
+    const { deals, pagesFetched, reportedTotal, truncated } = await scrapeColesHalfPrice(env, {
       maxPages,
       pageDelayMs,
       onPage: (page, count, total, expected) => {
@@ -113,6 +113,12 @@ async function main() {
         process.stdout.write(`  page ${page}: +${count} (total ${total}/${totalLabel})\n`);
       },
     });
+
+    if (truncated) {
+      console.warn(
+        `Coles: stopped at ${deals.length} deals before reported total ${reportedTotal} (raise COLES_MAX_PAGES, currently ${maxPages}).`,
+      );
+    }
 
     if (deals.length < minDeals) {
       throw new Error(

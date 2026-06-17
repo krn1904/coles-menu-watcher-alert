@@ -149,7 +149,7 @@ export function normalizeProducts(raw) {
   return deals;
 }
 
-export async function scrapeWoolworthsHalfPrice(env, { maxPages = 15, onPage } = {}) {
+export async function scrapeWoolworthsHalfPrice(env, { maxPages = 60, onPage } = {}) {
   if (!proxyConfigured(env)) {
     throw new Error(
       "SCRAPER_PROXY_URL is required for Woolworths (Akamai blocks datacenter IPs). " +
@@ -178,5 +178,12 @@ export async function scrapeWoolworthsHalfPrice(env, { maxPages = 15, onPage } =
     throw new Error("No half-price specials parsed (page shape changed or proxy blocked).");
   }
 
-  return { deals, categoryId, fetched: deals.length };
+  return {
+    deals,
+    categoryId,
+    fetched: deals.length,
+    reportedTotal: Number.isFinite(total) ? total : null,
+    rawCount: raw.length,
+    truncated: Number.isFinite(total) && raw.length < total,
+  };
 }

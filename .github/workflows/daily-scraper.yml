@@ -15,10 +15,10 @@ jobs:
       ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SCRAPER_PROXY_URL: ${{ secrets.SCRAPER_PROXY_URL }}
-      WOW_MAX_PAGES: ${{ vars.WOW_MAX_PAGES || '15' }}
+      WOW_MAX_PAGES: ${{ vars.WOW_MAX_PAGES || '60' }}
       MIN_WOOLWORTHS_DEALS: ${{ vars.MIN_WOOLWORTHS_DEALS || '10' }}
       MIN_COLES_DEALS: ${{ vars.MIN_COLES_DEALS || '40' }}
-      COLES_MAX_PAGES: ${{ vars.COLES_MAX_PAGES || '25' }}
+      COLES_MAX_PAGES: ${{ vars.COLES_MAX_PAGES || '35' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
