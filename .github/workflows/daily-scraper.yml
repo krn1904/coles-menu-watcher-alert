@@ -52,17 +52,13 @@ jobs:
           fi
           node scripts/scrape-woolworths.mjs
 
-      - name: Scrape Coles (Supabase Edge Function)
+      - name: Scrape Coles (proxied Node script)
         run: |
-          response=$(curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/coles-scraper" \
-            -H "Authorization: Bearer ${ANON_KEY}" \
-            -H "Content-Type: application/json" --data '{}')
-          echo "$response"
-          echo "$response" | node -e "
-            const r = JSON.parse(require('fs').readFileSync(0,'utf8'));
-            const minDeals = Number(process.env.MIN_COLES_DEALS || '10');
-            if (!r.success || Number(r.fetched || 0) < minDeals) process.exit(1);
-          "
+          if [[ -z "${SCRAPER_PROXY_URL}" || -z "${SUPABASE_SERVICE_ROLE_KEY}" ]]; then
+            echo "Missing SCRAPER_PROXY_URL or SUPABASE_SERVICE_ROLE_KEY — Coles cannot run without an AU proxy."
+            exit 1
+          fi
+          node scripts/scrape-coles.mjs
 
       - name: Send email alerts for new deals
         run: |
