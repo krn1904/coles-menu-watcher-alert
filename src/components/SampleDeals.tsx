@@ -5,8 +5,33 @@ import type { Database } from "@/integrations/supabase/types";
 
 type Deal = Database["public"]["Tables"]["deals"]["Row"];
 const PAGE_SIZE = 15;
+const COMPARISON_PAGE_SIZE = 10;
+type StoreFilter = "all" | "coles" | "woolworths";
+type SortMode = "latest" | "discount" | "price";
+type ComparisonGroup = {
+  key: string;
+  canonicalName: string;
+  coles?: Deal;
+  woolworths?: Deal;
+};
 
 const formatPrice = (price: number) => `$${price.toFixed(2)}`;
+const formatWeekStart = (weekStart: string | null) => {
+  if (!weekStart) return "N/A";
+  const d = new Date(`${weekStart}T00:00:00Z`);
+  return d.toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+const getCurrentWeekStart = (date = new Date()) => {
+  const utc = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const diff = (utc.getUTCDay() - 3 + 7) % 7; // Wednesday anchor
+  utc.setUTCDate(utc.getUTCDate() - diff);
+  return utc.toISOString().split("T")[0];
+};
+
+const dealTimestamp = (deal: Deal) => Date.parse(deal.created_at || "") || 0;
+const discountValue = (deal: Deal) => deal.discount_percentage ?? 0;
+const maybeDiscountValue = (deal?: Deal) => (deal ? discountValue(deal) : 0);
 
 const DealCard: React.FC<{ deal: Deal }> = ({ deal }) => (
   <Card className="overflow-hidden transition-all hover:shadow-md relative">
@@ -22,7 +47,7 @@ const DealCard: React.FC<{ deal: Deal }> = ({ deal }) => (
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs text-gray-500">{deal.category}</span>
         {deal.store && (
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-coles-red">
             {deal.store}
           </span>
         )}
@@ -43,32 +68,111 @@ const DealCard: React.FC<{ deal: Deal }> = ({ deal }) => (
   </Card>
 );
 
+const normalizeComparisonKey = (name: string): string => {
+  return name
+    .toLowerCase()
+    .replace(/\b\d+(\.\d+)?\s?(g|kg|ml|l|pack|pk|x)\b/g, " ")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 4)
+    .join(" ");
+};
+
 const SampleDeals: React.FC = () => {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [storeFilter, setStoreFilter] = useState<StoreFilter>("all");
+  const [sortMode, setSortMode] = useState<SortMode>("latest");
+  const [comparisonMode, setComparisonMode] = useState(false);
+  const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart());
 
   useEffect(() => {
     const fetchDeals = async () => {
       setLoading(true);
-      const { data } = await supabase
+      const weekStart = getCurrentWeekStart();
+      setActiveWeekStart(weekStart);
+      const { data, error } = await supabase
         .from("deals")
         .select("*")
+        .eq("week_start", weekStart)
         .order("created_at", { ascending: false });
+      if (error) {
+        setDeals([]);
+        setLoading(false);
+        return;
+      }
       if (data) setDeals(data);
       setLoading(false);
     };
     fetchDeals();
   }, []);
 
-  const totalPages = useMemo(() => Math.ceil(deals.length / PAGE_SIZE), [deals]);
+  useEffect(() => {
+    setPage(1);
+  }, [storeFilter, sortMode, comparisonMode]);
+
+  const filteredDeals = useMemo(() => {
+    const byStore = storeFilter === "all"
+      ? deals
+      : deals.filter((d) => d.store === storeFilter);
+    const sorted = [...byStore];
+    sorted.sort((a, b) => {
+      if (sortMode === "discount") return discountValue(b) - discountValue(a);
+      if (sortMode === "price") return a.sale_price - b.sale_price;
+      return dealTimestamp(b) - dealTimestamp(a);
+    });
+    return sorted;
+  }, [deals, sortMode, storeFilter]);
+
+  const comparisonGroups = useMemo(() => {
+    const map = new Map<string, ComparisonGroup>();
+    for (const deal of filteredDeals) {
+      if (!deal.store) continue;
+      const key = normalizeComparisonKey(deal.name);
+      if (!key) continue;
+      const existing = map.get(key) || {
+        key,
+        canonicalName: deal.name,
+      };
+      const store = deal.store === "coles" ? "coles" : deal.store === "woolworths" ? "woolworths" : "";
+      if (!store) continue;
+      const previous = existing[store];
+      if (!previous || discountValue(deal) > discountValue(previous)) {
+        existing[store] = deal;
+      }
+      map.set(key, existing);
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      const bestA = Math.max(maybeDiscountValue(a.coles), maybeDiscountValue(a.woolworths));
+      const bestB = Math.max(maybeDiscountValue(b.coles), maybeDiscountValue(b.woolworths));
+      return bestB - bestA;
+    });
+  }, [filteredDeals]);
+
+  const totalPages = useMemo(() => {
+    if (comparisonMode) return Math.max(1, Math.ceil(comparisonGroups.length / COMPARISON_PAGE_SIZE));
+    return Math.max(1, Math.ceil(filteredDeals.length / PAGE_SIZE));
+  }, [comparisonMode, comparisonGroups.length, filteredDeals.length]);
+
   const paginatedDeals = useMemo(
-    () => deals.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [deals, page]
+    () => filteredDeals.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filteredDeals, page]
+  );
+  const paginatedGroups = useMemo(
+    () => comparisonGroups.slice((page - 1) * COMPARISON_PAGE_SIZE, page * COMPARISON_PAGE_SIZE),
+    [comparisonGroups, page]
   );
 
+  const storeCounts = useMemo(() => ({
+    coles: deals.filter((d) => d.store === "coles").length,
+    woolworths: deals.filter((d) => d.store === "woolworths").length,
+  }), [deals]);
+
   const getPageNumbers = (): (number | string)[] => {
-    const range = [];
+    const range: (number | string)[] = [];
     const delta = 2;
 
     if (totalPages <= 7) {
@@ -93,24 +197,101 @@ const SampleDeals: React.FC = () => {
     <div>
       <h2 className="text-2xl font-bold mb-6">Half-Price Deals</h2>
       <p className="text-gray-600 mb-8">
-        Here are the latest half-price deals from Coles and Woolworths:
+        Here are the current week half-price deals from Coles and Woolworths:
       </p>
-      {!loading && deals.length === 0 && (
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
+        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Active week</p><p className="font-semibold">{formatWeekStart(activeWeekStart)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Total active deals</p><p className="font-semibold">{deals.length}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Coles</p><p className="font-semibold">{storeCounts.coles}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Woolworths</p><p className="font-semibold">{storeCounts.woolworths}</p></CardContent></Card>
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-6">
+        {(["all", "coles", "woolworths"] as const).map((store) => (
+          <button
+            key={store}
+            onClick={() => setStoreFilter(store)}
+            className={`px-3 py-1 rounded text-sm transition ${
+              storeFilter === store ? "bg-coles-red text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            {store === "all" ? "All stores" : store[0].toUpperCase() + store.slice(1)}
+          </button>
+        ))}
+        {(["latest", "discount", "price"] as const).map((mode) => (
+          <button
+            key={mode}
+            onClick={() => setSortMode(mode)}
+            className={`px-3 py-1 rounded text-sm transition ${
+              sortMode === mode ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            Sort: {mode}
+          </button>
+        ))}
+        <button
+          onClick={() => setComparisonMode((v) => !v)}
+          className={`px-3 py-1 rounded text-sm transition ${
+            comparisonMode ? "bg-yellow-500 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+          }`}
+        >
+          {comparisonMode ? "Comparison mode: on" : "Comparison mode: off"}
+        </button>
+      </div>
+
+      {!loading && filteredDeals.length === 0 && (
         <p className="text-gray-500 mb-8">
-          No deals yet — they'll appear here after the next scrape runs.
+          No active-week deals for this filter yet. They will appear after the next scrape.
         </p>
       )}
       {loading ? (
         <div>Loading...</div>
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {paginatedDeals.map(deal => (
-              <DealCard key={deal.id} deal={deal} />
-            ))}
-          </div>
+          {comparisonMode ? (
+            <div className="space-y-3">
+              {paginatedGroups.map((group) => (
+                <Card key={group.key}>
+                  <CardContent className="p-4">
+                    <p className="font-medium mb-3">{group.canonicalName}</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="border rounded p-3">
+                        <p className="text-xs text-gray-500 mb-1">Coles</p>
+                        {group.coles ? (
+                          <p className="text-sm">
+                            <span className="font-semibold">{formatPrice(group.coles.sale_price)}</span>{" "}
+                            <span className="line-through text-gray-400">{formatPrice(group.coles.original_price)}</span>{" "}
+                            <span className="text-coles-red font-semibold">{group.coles.discount_percentage}% off</span>
+                          </p>
+                        ) : (
+                          <p className="text-sm text-gray-400">Not in current feed</p>
+                        )}
+                      </div>
+                      <div className="border rounded p-3">
+                        <p className="text-xs text-gray-500 mb-1">Woolworths</p>
+                        {group.woolworths ? (
+                          <p className="text-sm">
+                            <span className="font-semibold">{formatPrice(group.woolworths.sale_price)}</span>{" "}
+                            <span className="line-through text-gray-400">{formatPrice(group.woolworths.original_price)}</span>{" "}
+                            <span className="text-coles-red font-semibold">{group.woolworths.discount_percentage}% off</span>
+                          </p>
+                        ) : (
+                          <p className="text-sm text-gray-400">Not in current feed</p>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {paginatedDeals.map(deal => (
+                <DealCard key={deal.id} deal={deal} />
+              ))}
+            </div>
+          )}
 
-          {/* Improved Pagination */}
           <div className="flex justify-center items-center gap-2 mt-8 flex-wrap">
             <button
               onClick={() => setPage(p => Math.max(1, p - 1))}

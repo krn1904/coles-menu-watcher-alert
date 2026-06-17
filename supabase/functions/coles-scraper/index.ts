@@ -18,6 +18,7 @@ const PAGE_HEADERS = {
   ...BROWSER_HEADERS,
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
+const MIN_COLES_DEALS = Number(Deno.env.get("MIN_COLES_DEALS") || "10");
 
 // Recursively walk parsed JSON looking for Coles product objects. Coles product
 // nodes look like { _type:'PRODUCT', name, brand, pricing:{ now, was }, ... }.
@@ -144,12 +145,30 @@ serve(async (req) => {
       });
     }
 
+    if (deals.length < MIN_COLES_DEALS) {
+      const msg = `Coles fetched too few deals (${deals.length}). Possible block or page-shape change.`;
+      await logFetch(supabase, "coles", false, msg, {
+        fetched: deals.length,
+        inserted: 0,
+        updated: 0,
+        week_start: weekStart,
+        min_expected: MIN_COLES_DEALS,
+        errors: [msg],
+      });
+      return jsonResponse(
+        { success: false, store: "coles", fetched: deals.length, inserted: 0, updated: 0, errors: [msg] },
+        502,
+      );
+    }
+
     const { inserted, updated, errors } = await upsertDeals(supabase, deals, weekStart);
     const message = `Coles: fetched ${deals.length}, inserted ${inserted}, updated ${updated}, failed ${errors.length}`;
     await logFetch(supabase, "coles", errors.length === 0, message, {
       fetched: deals.length,
       inserted,
       updated,
+      week_start: weekStart,
+      min_expected: MIN_COLES_DEALS,
       errors,
     });
 
@@ -159,7 +178,14 @@ serve(async (req) => {
     );
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown Coles scraper error";
-    await logFetch(supabase, "coles", false, msg, { fetched: 0, inserted: 0, updated: 0, errors: [msg] });
+    await logFetch(supabase, "coles", false, msg, {
+      fetched: 0,
+      inserted: 0,
+      updated: 0,
+      week_start: weekStart,
+      min_expected: MIN_COLES_DEALS,
+      errors: [msg],
+    });
     return jsonResponse(
       { success: false, store: "coles", fetched: 0, inserted: 0, updated: 0, errors: [msg] },
       502,

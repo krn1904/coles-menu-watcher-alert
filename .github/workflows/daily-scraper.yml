@@ -16,6 +16,8 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SCRAPER_PROXY_URL: ${{ secrets.SCRAPER_PROXY_URL }}
       WOW_MAX_PAGES: ${{ vars.WOW_MAX_PAGES || '15' }}
+      MIN_WOOLWORTHS_DEALS: ${{ vars.MIN_WOOLWORTHS_DEALS || '10' }}
+      MIN_COLES_DEALS: ${{ vars.MIN_COLES_DEALS || '10' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,7 +59,8 @@ jobs:
           echo "$response"
           echo "$response" | node -e "
             const r = JSON.parse(require('fs').readFileSync(0,'utf8'));
-            if (!r.success && r.fetched === 0) process.exit(1);
+            const minDeals = Number(process.env.MIN_COLES_DEALS || '10');
+            if (!r.success || Number(r.fetched || 0) < minDeals) process.exit(1);
           "
 
       - name: Send email alerts for new deals

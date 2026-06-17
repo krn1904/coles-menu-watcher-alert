@@ -11,6 +11,7 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   (required)
 //   SCRAPER_PROXY_URL                         (required)
 //   WOW_MAX_PAGES                             (optional, default 15)
+//   MIN_WOOLWORTHS_DEALS                      (optional, default 10)
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -96,6 +97,7 @@ async function main() {
   }
 
   const maxPages = Number(env.WOW_MAX_PAGES || "15");
+  const minDeals = Number(env.MIN_WOOLWORTHS_DEALS || "10");
   const supabase = createClient(url, key);
   const weekStart = getWeekStart();
 
@@ -108,6 +110,10 @@ async function main() {
       },
     });
     console.log(`Half-price category: ${categoryId}`);
+
+    if (deals.length < minDeals) {
+      throw new Error(`Woolworths fetched too few deals (${deals.length} < ${minDeals}).`);
+    }
 
     const { inserted, updated, errors } = await upsertDeals(supabase, deals, weekStart);
     const message = `Woolworths: fetched ${deals.length}, inserted ${inserted}, updated ${updated}, failed ${errors.length}`;
@@ -124,7 +130,7 @@ async function main() {
       store: "woolworths",
       success: result.success,
       message: result.errors.length ? result.errors[0] : `inserted ${result.inserted}, updated ${result.updated}`,
-      data: result,
+      data: { ...result, week_start: weekStart, min_expected: minDeals },
       created_at: new Date().toISOString(),
     },
   ]);

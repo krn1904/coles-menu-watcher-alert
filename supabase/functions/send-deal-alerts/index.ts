@@ -4,6 +4,7 @@ import {
   corsHeaders,
   jsonResponse,
   getServiceClient,
+  getWeekStart,
   logFetch,
 } from "../_shared/deals.ts";
 
@@ -24,6 +25,7 @@ type Deal = {
   image_url: string | null;
   store: string;
   created_at: string | null;
+  week_start: string | null;
 };
 
 function dealMatchesSubscription(deal: Deal, sub: Subscription): boolean {
@@ -107,6 +109,7 @@ serve(async (req) => {
   try {
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     const testEmail = typeof body.testEmail === "string" ? body.testEmail : null;
+    const activeWeekStart = getWeekStart();
 
     // Deals first seen since the last successful alert run (created_at is preserved on re-scrape).
     const { data: lastAlert } = await supabase
@@ -124,8 +127,9 @@ serve(async (req) => {
 
     const { data: deals, error: dealsError } = await supabase
       .from("deals")
-      .select("id,name,category,original_price,sale_price,discount_percentage,image_url,store,created_at")
+      .select("id,name,category,original_price,sale_price,discount_percentage,image_url,store,created_at,week_start")
       .gte("created_at", since)
+      .eq("week_start", activeWeekStart)
       .order("created_at", { ascending: false });
 
     if (dealsError) throw new Error(`Failed to load deals: ${dealsError.message}`);
@@ -133,7 +137,7 @@ serve(async (req) => {
     const newDeals = (deals || []) as Deal[];
     if (newDeals.length === 0) {
       const msg = "No new deals since last alert run.";
-      await logFetch(supabase, "alerts", true, msg, { sent: 0, skipped: 0 });
+      await logFetch(supabase, "alerts", true, msg, { sent: 0, skipped: 0, week_start: activeWeekStart });
       return jsonResponse({ success: true, sent: 0, skipped: 0, message: msg });
     }
 
@@ -146,6 +150,7 @@ serve(async (req) => {
       await logFetch(supabase, "alerts", true, `Test email sent to ${testEmail}`, {
         sent: 1,
         deals: newDeals.length,
+        week_start: activeWeekStart,
       });
       return jsonResponse({ success: true, sent: 1, testEmail, deals: newDeals.length });
     }
@@ -154,7 +159,12 @@ serve(async (req) => {
     const senderEmail = Deno.env.get("BREVO_SENDER_EMAIL");
     if (!apiKey || !senderEmail) {
       const msg = "BREVO_API_KEY / BREVO_SENDER_EMAIL not configured — skipping subscriber emails.";
-      await logFetch(supabase, "alerts", true, msg, { sent: 0, skipped: 0, deals: newDeals.length });
+      await logFetch(supabase, "alerts", true, msg, {
+        sent: 0,
+        skipped: 0,
+        deals: newDeals.length,
+        week_start: activeWeekStart,
+      });
       return jsonResponse({ success: true, sent: 0, skipped: 0, message: msg, deals: newDeals.length });
     }
 
@@ -192,6 +202,7 @@ serve(async (req) => {
       skipped,
       errors,
       deals: newDeals.length,
+      week_start: activeWeekStart,
     });
 
     return jsonResponse(
