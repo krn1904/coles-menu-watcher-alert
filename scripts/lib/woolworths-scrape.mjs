@@ -1,5 +1,6 @@
 // Woolworths half-price scrape logic shared by the local script and tests.
 import { proxyConfigured, proxiedFetch } from "./proxy.mjs";
+import { categorizeProductName } from "./categorize-product.mjs";
 
 export const ORIGIN = "https://www.woolworths.com.au";
 export const HALF_PRICE_URL = "/shop/browse/specials/half-price";
@@ -137,7 +138,7 @@ export function normalizeProducts(raw) {
       brand && !name.toLowerCase().startsWith(brand.toLowerCase()) ? `${brand} ${name}` : name;
     deals.push({
       name: fullName,
-      category: "Groceries",
+      category: categorizeProductName(fullName),
       original_price: was,
       sale_price: sale,
       discount_percentage: discountPct(was, sale),

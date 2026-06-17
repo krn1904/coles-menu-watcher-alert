@@ -1,5 +1,6 @@
 // Coles half-price scrape logic shared by the CI script and local runs.
 import { proxyConfigured, proxiedFetch } from "./proxy.mjs";
+import { categorizeProductName } from "./categorize-product.mjs";
 
 export const HALF_PRICE_BASE = "https://www.coles.com.au/on-special?filter_Special=halfprice";
 export const DEFAULT_ASSETS_URL = "https://cdn.productimages.coles.com.au/productimages";
@@ -100,7 +101,7 @@ export function productToDeal(product, assetsUrl) {
 
   return {
     name,
-    category: getProductCategory(product),
+    category: categorizeProductName(name, getProductCategory(product)),
     original_price: was,
     sale_price: sale,
     discount_percentage: discount,

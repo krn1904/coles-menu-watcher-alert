@@ -1,478 +1,407 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Search, RefreshCw, Scale, LayoutGrid, AlertCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { CATEGORIES, type CategoryId } from "@/lib/categories";
+import {
+  buildComparisonGroups,
+  dealMatchesSearch,
+  deriveCategory,
+  formatWeekStart,
+  getCurrentWeekStart,
+  getCheaperStore,
+  type ComparisonGroup,
+} from "@/lib/product-match";
+import { ComparisonCard } from "@/components/deals/ComparisonCard";
+import { DealCard } from "@/components/deals/DealCard";
 
 type Deal = Database["public"]["Tables"]["deals"]["Row"];
-const PAGE_SIZE = 15;
-const COMPARISON_PAGE_SIZE = 10;
+type ViewMode = "compare" | "browse";
 type StoreFilter = "all" | "coles" | "woolworths";
-type SortMode = "latest" | "discount" | "price";
-type ComparisonGroup = {
-  key: string;
-  canonicalName: string;
-  confidence: "high" | "medium";
-  coles?: Deal;
-  woolworths?: Deal;
-};
+type SortMode = "savings" | "discount" | "price" | "name";
 
-const formatPrice = (price: number) => `$${price.toFixed(2)}`;
-const formatWeekStart = (weekStart: string | null) => {
-  if (!weekStart) return "N/A";
-  const d = new Date(`${weekStart}T00:00:00Z`);
-  return d.toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "numeric" });
-};
-
-const getCurrentWeekStart = (date = new Date()) => {
-  const utc = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const diff = (utc.getUTCDay() - 3 + 7) % 7; // Wednesday anchor
-  utc.setUTCDate(utc.getUTCDate() - diff);
-  return utc.toISOString().split("T")[0];
-};
-
-const dealTimestamp = (deal: Deal) => Date.parse(deal.created_at || "") || 0;
-const discountValue = (deal: Deal) => deal.discount_percentage ?? 0;
-const maybeDiscountValue = (deal?: Deal) => (deal ? discountValue(deal) : 0);
-
-const MULTI_WORD_BRANDS = [
-  "head shoulders",
-  "oral b",
-  "red rock",
-  "natural confectionery",
-  "m m",
-];
-const TOKEN_STOPWORDS = new Set([
-  "the", "and", "with", "for", "from", "of", "in", "to", "a", "an",
-  "pack", "pk", "size", "new", "classic", "original", "ultimate", "gift",
-  "share", "block", "bar", "box", "tube", "bottle", "drink", "liquid",
-  "soft", "fresh", "care",
-]);
-
-const CATEGORY_RULES: Array<{ category: string; pattern: RegExp }> = [
-  { category: "chocolate", pattern: /cadbury|chocolate|kinder|m&m|maltesers|kit kat|lindt/i },
-  { category: "nappies", pattern: /huggies|napp|babylove|curash/i },
-  { category: "shampoo", pattern: /shampoo|conditioner|head\s*&?\s*shoulders|pantene/i },
-  { category: "oral care", pattern: /toothpaste|toothbrush|oral-?b|colgate/i },
-  { category: "chips snacks", pattern: /chips|crackers|shapes|nuts|popcorn/i },
-  { category: "coffee tea", pattern: /coffee|nescafe|moccona|tea/i },
-  { category: "cleaning", pattern: /finish|dishwash|cold power|radiant|detergent|laundry/i },
-  { category: "paper", pattern: /paper towel|toilet tissue|quilton|icare|kleenex/i },
-  { category: "dairy", pattern: /milk|yoghurt|cheese|butter|cream/i },
-  { category: "drinks", pattern: /pepsi|coca|cola|juice|powerade|gatorade/i },
-];
-
-const DealCard: React.FC<{ deal: Deal }> = ({ deal }) => (
-  <Card className="overflow-hidden transition-all hover:shadow-md relative">
-    <span className="deal-badge">{deal.discount_percentage}% OFF</span>
-    <div className="aspect-square bg-gray-100 flex items-center justify-center">
-      <img
-        src={deal.image_url || ""}
-        alt={deal.name}
-        className="object-contain"
-      />
-    </div>
-    <CardContent className="p-4">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-gray-500">{deal.category}</span>
-        {deal.store && (
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-coles-red">
-            {deal.store}
-          </span>
-        )}
-      </div>
-      <h3 className="font-medium line-clamp-2">{deal.name}</h3>
-      <div className="mt-2 flex items-center justify-between">
-        <div className="flex flex-col">
-          <span className="text-xs line-through text-gray-400">
-            {formatPrice(deal.original_price)}
-          </span>
-          <span className="text-lg font-bold text-coles-red">
-            {formatPrice(deal.sale_price)}
-          </span>
-        </div>
-        <span className="price-tag">HALF PRICE</span>
-      </div>
-    </CardContent>
-  </Card>
-);
-
-const normalizeName = (name: string): string => {
-  return name
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/ultramen/g, "ultra men")
-    .replace(/m&m/g, "m m")
-    .replace(/[^a-z0-9 ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-};
-
-const getSignificantTokens = (name: string): string[] => {
-  return normalizeName(name)
-    .replace(/\b\d+(\.\d+)?\s?(g|kg|ml|l|pack|pk|x|ct)\b/g, " ")
-    .split(" ")
-    .filter((t) => t.length > 1 && !TOKEN_STOPWORDS.has(t));
-};
-
-const deriveCategory = (name: string): string => {
-  for (const rule of CATEGORY_RULES) {
-    if (rule.pattern.test(name)) return rule.category;
-  }
-  return "other";
-};
-
-const getBrandKey = (name: string): string => {
-  const normalized = normalizeName(name);
-  for (const brand of MULTI_WORD_BRANDS) {
-    if (normalized.startsWith(brand)) return brand;
-  }
-  const tokens = getSignificantTokens(name);
-  return tokens[0] || "";
-};
-
-const jaccardScore = (a: string[], b: string[]): number => {
-  if (a.length === 0 || b.length === 0) return 0;
-  const setA = new Set(a);
-  const setB = new Set(b);
-  let inter = 0;
-  for (const token of setA) if (setB.has(token)) inter++;
-  const union = new Set([...setA, ...setB]).size;
-  return union > 0 ? inter / union : 0;
-};
-
-const sharedTokenCount = (a: string[], b: string[]): number => {
-  const setB = new Set(b);
-  return new Set(a.filter((t) => setB.has(t))).size;
-};
-
-const getComparisonKey = (name: string): string => {
-  return getSignificantTokens(name)
-    .slice(0, 5)
-    .join(" ");
-};
+const PAGE_SIZE = 12;
 
 const SampleDeals: React.FC = () => {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [viewMode, setViewMode] = useState<ViewMode>("compare");
   const [storeFilter, setStoreFilter] = useState<StoreFilter>("all");
-  const [sortMode, setSortMode] = useState<SortMode>("latest");
-  const [comparisonMode, setComparisonMode] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryId | "all">("all");
+  const [sortMode, setSortMode] = useState<SortMode>("savings");
+  const [searchQuery, setSearchQuery] = useState("");
   const [pairedOnly, setPairedOnly] = useState(true);
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart());
 
-  useEffect(() => {
-    const fetchDeals = async () => {
-      setLoading(true);
-      const weekStart = getCurrentWeekStart();
-      setActiveWeekStart(weekStart);
-      const { data, error } = await supabase
-        .from("deals")
-        .select("*")
-        .eq("week_start", weekStart)
-        .order("created_at", { ascending: false });
-      if (error) {
-        setDeals([]);
-        setLoading(false);
-        return;
-      }
-      if (data) setDeals(data);
+  const fetchDeals = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const weekStart = getCurrentWeekStart();
+    setActiveWeekStart(weekStart);
+    const { data, error: fetchError } = await supabase
+      .from("deals")
+      .select("*")
+      .eq("week_start", weekStart)
+      .order("created_at", { ascending: false });
+
+    if (fetchError) {
+      setDeals([]);
+      setError("Could not load deals. Please try again.");
       setLoading(false);
-    };
-    fetchDeals();
+      return;
+    }
+    setDeals(data ?? []);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    setPage(1);
-  }, [storeFilter, sortMode, comparisonMode, pairedOnly]);
+    fetchDeals();
+  }, [fetchDeals]);
 
-  const filteredDeals = useMemo(() => {
-    const byStore = storeFilter === "all"
-      ? deals
-      : deals.filter((d) => d.store === storeFilter);
-    const sorted = [...byStore];
-    sorted.sort((a, b) => {
-      if (sortMode === "discount") return discountValue(b) - discountValue(a);
-      if (sortMode === "price") return a.sale_price - b.sale_price;
-      return dealTimestamp(b) - dealTimestamp(a);
-    });
-    return sorted;
-  }, [deals, sortMode, storeFilter]);
+  useEffect(() => {
+    setPage(1);
+  }, [viewMode, storeFilter, categoryFilter, sortMode, searchQuery, pairedOnly]);
+
+  const storeCounts = useMemo(
+    () => ({
+      coles: deals.filter((d) => d.store === "coles").length,
+      woolworths: deals.filter((d) => d.store === "woolworths").length,
+    }),
+    [deals],
+  );
 
   const comparisonGroups = useMemo(() => {
-    const colesDeals = filteredDeals.filter((d) => d.store === "coles");
-    const wooliesDeals = filteredDeals.filter((d) => d.store === "woolworths");
-    const groups: ComparisonGroup[] = [];
-    const usedWoolies = new Set<string>();
+    const searched = deals.filter((d) => dealMatchesSearch(d, searchQuery));
+    const byCategory =
+      categoryFilter === "all"
+        ? searched
+        : searched.filter((d) => deriveCategory(d.name, d.category) === categoryFilter);
+    return buildComparisonGroups(byCategory, { pairedOnly });
+  }, [deals, searchQuery, categoryFilter, pairedOnly]);
 
-    for (const colesDeal of colesDeals) {
-      const colesTokens = getSignificantTokens(colesDeal.name);
-      const colesCategory = deriveCategory(colesDeal.name);
-      const colesBrand = getBrandKey(colesDeal.name);
-
-      let best: Deal | undefined;
-      let bestScore = 0;
-      let bestShared = 0;
-
-      for (const wooliesDeal of wooliesDeals) {
-        if (usedWoolies.has(wooliesDeal.id)) continue;
-        const wooliesCategory = deriveCategory(wooliesDeal.name);
-        const wooliesBrand = getBrandKey(wooliesDeal.name);
-        if (colesCategory !== wooliesCategory || colesBrand !== wooliesBrand) continue;
-
-        const wooliesTokens = getSignificantTokens(wooliesDeal.name);
-        const score = jaccardScore(colesTokens, wooliesTokens);
-        const shared = sharedTokenCount(colesTokens, wooliesTokens);
-
-        if (shared < 2) continue;
-        if (score > bestScore || (score === bestScore && shared > bestShared)) {
-          best = wooliesDeal;
-          bestScore = score;
-          bestShared = shared;
-        }
-      }
-
-      if (!best || bestScore < 0.35) {
-        if (!pairedOnly) {
-          groups.push({
-            key: `${colesDeal.id}-solo`,
-            canonicalName: colesDeal.name,
-            confidence: "medium",
-            coles: colesDeal,
-          });
-        }
-        continue;
-      }
-
-      usedWoolies.add(best.id);
-      groups.push({
-        key: getComparisonKey(colesDeal.name) || `${colesDeal.id}-${best.id}`,
-        canonicalName: colesDeal.name,
-        confidence: bestScore >= 0.5 ? "high" : "medium",
-        coles: colesDeal,
-        woolworths: best,
-      });
-    }
-
-    if (!pairedOnly) {
-      for (const wooliesDeal of wooliesDeals) {
-        if (usedWoolies.has(wooliesDeal.id)) continue;
-        groups.push({
-          key: `${wooliesDeal.id}-solo`,
-          canonicalName: wooliesDeal.name,
-          confidence: "medium",
-          woolworths: wooliesDeal,
-        });
+  const comparisonStats = useMemo(() => {
+    const paired = comparisonGroups.filter((g) => g.coles && g.woolworths);
+    let cheaperColes = 0;
+    let cheaperWoolies = 0;
+    let samePrice = 0;
+    let totalSavings = 0;
+    for (const g of paired) {
+      const c = getCheaperStore(g.coles, g.woolworths);
+      if (!c) continue;
+      if (c.store === "coles") {
+        cheaperColes++;
+        totalSavings += c.savings;
+      } else if (c.store === "woolworths") {
+        cheaperWoolies++;
+        totalSavings += c.savings;
+      } else {
+        samePrice++;
       }
     }
+    return {
+      paired: paired.length,
+      cheaperColes,
+      cheaperWoolies,
+      samePrice,
+      totalSavings,
+      colesOnly: comparisonGroups.filter((g) => g.coles && !g.woolworths).length,
+      wooliesOnly: comparisonGroups.filter((g) => g.woolworths && !g.coles).length,
+    };
+  }, [comparisonGroups]);
 
-    return groups.sort((a, b) => {
-      const pairedA = a.coles && a.woolworths ? 1 : 0;
-      const pairedB = b.coles && b.woolworths ? 1 : 0;
-      if (pairedA !== pairedB) return pairedB - pairedA;
-      const bestA = Math.max(maybeDiscountValue(a.coles), maybeDiscountValue(a.woolworths));
-      const bestB = Math.max(maybeDiscountValue(b.coles), maybeDiscountValue(b.woolworths));
-      return bestB - bestA;
+  const sortedGroups = useMemo(() => {
+    const groups = [...comparisonGroups];
+    groups.sort((a, b) => {
+      if (sortMode === "savings") {
+        const savA = a.savingsAmount ?? (a.coles && a.woolworths ? 0 : -1);
+        const savB = b.savingsAmount ?? (b.coles && b.woolworths ? 0 : -1);
+        const pairedA = a.coles && a.woolworths ? 1 : 0;
+        const pairedB = b.coles && b.woolworths ? 1 : 0;
+        if (pairedA !== pairedB) return pairedB - pairedA;
+        return savB - savA;
+      }
+      if (sortMode === "name") return a.canonicalName.localeCompare(b.canonicalName);
+      const priceA = Math.min(a.coles?.sale_price ?? Infinity, a.woolworths?.sale_price ?? Infinity);
+      const priceB = Math.min(b.coles?.sale_price ?? Infinity, b.woolworths?.sale_price ?? Infinity);
+      if (sortMode === "price") return priceA - priceB;
+      const discA = Math.max(a.coles?.discount_percentage ?? 0, a.woolworths?.discount_percentage ?? 0);
+      const discB = Math.max(b.coles?.discount_percentage ?? 0, b.woolworths?.discount_percentage ?? 0);
+      return discB - discA;
     });
-  }, [filteredDeals, pairedOnly]);
+    return groups;
+  }, [comparisonGroups, sortMode]);
 
-  const totalPages = useMemo(() => {
-    if (comparisonMode) return Math.max(1, Math.ceil(comparisonGroups.length / COMPARISON_PAGE_SIZE));
-    return Math.max(1, Math.ceil(filteredDeals.length / PAGE_SIZE));
-  }, [comparisonMode, comparisonGroups.length, filteredDeals.length]);
-
-  const paginatedDeals = useMemo(
-    () => filteredDeals.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [filteredDeals, page]
-  );
-  const paginatedGroups = useMemo(
-    () => comparisonGroups.slice((page - 1) * COMPARISON_PAGE_SIZE, page * COMPARISON_PAGE_SIZE),
-    [comparisonGroups, page]
-  );
-
-  const storeCounts = useMemo(() => ({
-    coles: deals.filter((d) => d.store === "coles").length,
-    woolworths: deals.filter((d) => d.store === "woolworths").length,
-  }), [deals]);
-
-  const getPageNumbers = (): (number | string)[] => {
-    const range: (number | string)[] = [];
-    const delta = 2;
-
-    if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) range.push(i);
-    } else {
-      const left = Math.max(2, page - delta);
-      const right = Math.min(totalPages - 1, page + delta);
-
-      range.push(1);
-      if (left > 2) range.push("...");
-
-      for (let i = left; i <= right; i++) range.push(i);
-
-      if (right < totalPages - 1) range.push("...");
-      range.push(totalPages);
+  const browseDeals = useMemo(() => {
+    let list = deals.filter((d) => dealMatchesSearch(d, searchQuery));
+    if (storeFilter !== "all") list = list.filter((d) => d.store === storeFilter);
+    if (categoryFilter !== "all") {
+      list = list.filter((d) => deriveCategory(d.name, d.category) === categoryFilter);
     }
+    list.sort((a, b) => {
+      if (sortMode === "price") return a.sale_price - b.sale_price;
+      if (sortMode === "name") return a.name.localeCompare(b.name);
+      if (sortMode === "discount") {
+        return (b.discount_percentage ?? 0) - (a.discount_percentage ?? 0);
+      }
+      return 0;
+    });
+    return list;
+  }, [deals, searchQuery, storeFilter, categoryFilter, sortMode]);
 
-    return range;
-  };
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<CategoryId, number>();
+    for (const d of deals) {
+      const cat = deriveCategory(d.name, d.category);
+      counts.set(cat, (counts.get(cat) ?? 0) + 1);
+    }
+    return counts;
+  }, [deals]);
+
+  const itemCount = viewMode === "compare" ? sortedGroups.length : browseDeals.length;
+  const totalPages = Math.max(1, Math.ceil(itemCount / PAGE_SIZE));
+  const paginatedGroups = sortedGroups.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const paginatedDeals = browseDeals.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const visibleCategories = CATEGORIES.filter((c) => (categoryCounts.get(c.id) ?? 0) > 0);
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-6">Half-Price Deals</h2>
-      <p className="text-gray-600 mb-8">
-        Here are the current week half-price deals from Coles and Woolworths:
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
-        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Active week</p><p className="font-semibold">{formatWeekStart(activeWeekStart)}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Total active deals</p><p className="font-semibold">{deals.length}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Coles</p><p className="font-semibold">{storeCounts.coles}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-gray-500">Woolworths</p><p className="font-semibold">{storeCounts.woolworths}</p></CardContent></Card>
+      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
+            <Scale className="h-7 w-7 text-coles-red" />
+            Compare half-price specials
+          </h2>
+          <p className="text-gray-600 mt-2 max-w-2xl">
+            See the same product at Coles and Woolworths side by side. We highlight where it is
+            cheaper so you know where to shop.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={fetchDeals} disabled={loading} className="shrink-0">
+          <RefreshCw className={cnIcon(loading)} />
+          Refresh
+        </Button>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-6">
-        {(["all", "coles", "woolworths"] as const).map((store) => (
-          <button
-            key={store}
-            onClick={() => setStoreFilter(store)}
-            className={`px-3 py-1 rounded text-sm transition ${
-              storeFilter === store ? "bg-coles-red text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            {store === "all" ? "All stores" : store[0].toUpperCase() + store.slice(1)}
-          </button>
-        ))}
-        {(["latest", "discount", "price"] as const).map((mode) => (
-          <button
-            key={mode}
-            onClick={() => setSortMode(mode)}
-            className={`px-3 py-1 rounded text-sm transition ${
-              sortMode === mode ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            Sort: {mode}
-          </button>
-        ))}
-        <button
-          onClick={() => setComparisonMode((v) => !v)}
-          className={`px-3 py-1 rounded text-sm transition ${
-            comparisonMode ? "bg-yellow-500 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-          }`}
-        >
-          {comparisonMode ? "Comparison mode: on" : "Comparison mode: off"}
-        </button>
-        {comparisonMode && (
-          <button
-            onClick={() => setPairedOnly((v) => !v)}
-            className={`px-3 py-1 rounded text-sm transition ${
-              pairedOnly ? "bg-green-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            {pairedOnly ? "Paired only: on" : "Paired only: off"}
-          </button>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <StatCard label="Week from" value={formatWeekStart(activeWeekStart)} />
+        <StatCard label="Matched pairs" value={String(comparisonStats.paired)} highlight />
+        <StatCard label="Cheaper at Coles" value={String(comparisonStats.cheaperColes)} />
+        <StatCard label="Cheaper at Woolworths" value={String(comparisonStats.cheaperWoolies)} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+        <StatCard label="Coles specials" value={String(storeCounts.coles)} />
+        <StatCard label="Woolworths specials" value={String(storeCounts.woolworths)} />
+        <StatCard label="Coles-only" value={String(comparisonStats.colesOnly)} />
+        <StatCard label="Woolworths-only" value={String(comparisonStats.wooliesOnly)} />
+      </div>
+
+      <div className="relative mb-4">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Search products — e.g. Cadbury, Huggies, Finish..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-10"
+        />
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-4">
+        <FilterChip active={viewMode === "compare"} onClick={() => setViewMode("compare")}>
+          <Scale className="h-3.5 w-3.5 mr-1 inline" />
+          Compare
+        </FilterChip>
+        <FilterChip active={viewMode === "browse"} onClick={() => setViewMode("browse")}>
+          <LayoutGrid className="h-3.5 w-3.5 mr-1 inline" />
+          Browse all
+        </FilterChip>
+        <span className="w-px h-6 bg-gray-200 mx-1 self-center hidden sm:block" />
+        {viewMode === "browse" &&
+          (["all", "coles", "woolworths"] as const).map((store) => (
+            <FilterChip key={store} active={storeFilter === store} onClick={() => setStoreFilter(store)}>
+              {store === "all" ? "All stores" : store === "coles" ? "Coles" : "Woolworths"}
+            </FilterChip>
+          ))}
+        {viewMode === "compare" && (
+          <FilterChip active={pairedOnly} onClick={() => setPairedOnly((v) => !v)}>
+            {pairedOnly ? "Matched pairs only" : "Include store-only"}
+          </FilterChip>
         )}
       </div>
 
-      {!loading && filteredDeals.length === 0 && (
-        <p className="text-gray-500 mb-8">
-          No active-week deals for this filter yet. They will appear after the next scrape.
-        </p>
+      <div className="flex flex-wrap gap-2 mb-4">
+        <FilterChip active={categoryFilter === "all"} onClick={() => setCategoryFilter("all")}>
+          All categories
+        </FilterChip>
+        {visibleCategories.map((cat) => (
+          <FilterChip
+            key={cat.id}
+            active={categoryFilter === cat.id}
+            onClick={() => setCategoryFilter(cat.id)}
+          >
+            {cat.emoji} {cat.label} ({categoryCounts.get(cat.id)})
+          </FilterChip>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-6">
+        {(
+          [
+            ["savings", "Biggest savings"],
+            ["discount", "Highest discount"],
+            ["price", "Lowest price"],
+            ["name", "A–Z"],
+          ] as const
+        ).map(([mode, label]) => (
+          <FilterChip key={mode} active={sortMode === mode} onClick={() => setSortMode(mode)} muted>
+            {label}
+          </FilterChip>
+        ))}
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 text-red-600 bg-red-50 border border-red-100 rounded-lg p-4 mb-6">
+          <AlertCircle className="h-5 w-5 shrink-0" />
+          <p className="text-sm">{error}</p>
+          <Button variant="outline" size="sm" onClick={fetchDeals} className="ml-auto">
+            Retry
+          </Button>
+        </div>
       )}
+
       {loading ? (
-        <div>Loading...</div>
+        <div className="space-y-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-48 w-full rounded-xl" />
+          ))}
+        </div>
+      ) : itemCount === 0 ? (
+        <EmptyState searchQuery={searchQuery} onRefresh={fetchDeals} />
       ) : (
         <>
-          {comparisonMode ? (
-            <div className="space-y-3">
-              {paginatedGroups.map((group) => (
-                <Card key={group.key}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="font-medium">{group.canonicalName}</p>
-                      <span className={`text-xs px-2 py-1 rounded ${
-                        group.confidence === "high" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
-                      }`}>
-                        {group.confidence} confidence
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div className="border rounded p-3">
-                        <p className="text-xs text-gray-500 mb-1">Coles</p>
-                        {group.coles ? (
-                          <p className="text-sm">
-                            <span className="font-semibold">{formatPrice(group.coles.sale_price)}</span>{" "}
-                            <span className="line-through text-gray-400">{formatPrice(group.coles.original_price)}</span>{" "}
-                            <span className="text-coles-red font-semibold">{group.coles.discount_percentage}% off</span>
-                          </p>
-                        ) : (
-                          <p className="text-sm text-gray-400">Not in current feed</p>
-                        )}
-                      </div>
-                      <div className="border rounded p-3">
-                        <p className="text-xs text-gray-500 mb-1">Woolworths</p>
-                        {group.woolworths ? (
-                          <p className="text-sm">
-                            <span className="font-semibold">{formatPrice(group.woolworths.sale_price)}</span>{" "}
-                            <span className="line-through text-gray-400">{formatPrice(group.woolworths.original_price)}</span>{" "}
-                            <span className="text-coles-red font-semibold">{group.woolworths.discount_percentage}% off</span>
-                          </p>
-                        ) : (
-                          <p className="text-sm text-gray-400">Not in current feed</p>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+          <p className="text-sm text-gray-500 mb-4">
+            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, itemCount)} of {itemCount}
+            {viewMode === "compare" ? " comparisons" : " deals"}
+          </p>
+
+          {viewMode === "compare" ? (
+            <div className="space-y-4">
+              {paginatedGroups.map((group: ComparisonGroup) => (
+                <ComparisonCard key={group.key} group={group} />
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {paginatedDeals.map(deal => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+              {paginatedDeals.map((deal) => (
                 <DealCard key={deal.id} deal={deal} />
               ))}
             </div>
           )}
 
-          <div className="flex justify-center items-center gap-2 mt-8 flex-wrap">
-            <button
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="px-3 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition disabled:opacity-50"
-            >
-              Previous
-            </button>
-            {getPageNumbers().map((p, idx) =>
-              p === "..." ? (
-                <span key={`ellipsis-${idx}`} className="px-2 text-gray-400">
-                  ...
-                </span>
-              ) : (
-                <button
-                  key={p}
-                  onClick={() => setPage(p as number)}
-                  className={`px-3 py-1 rounded transition ${
-                    page === p
-                      ? "bg-coles-red text-white font-bold"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                  disabled={page === p}
-                >
-                  {p}
-                </button>
-              )
-            )}
-            <button
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-              className="px-3 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition disabled:opacity-50"
-            >
-              Next
-            </button>
-          </div>
+          {totalPages > 1 && (
+            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+          )}
         </>
       )}
     </div>
   );
 };
+
+function StatCard({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <Card className={highlight ? "border-green-200 bg-green-50/50" : undefined}>
+      <CardContent className="p-4">
+        <p className="text-xs text-gray-500">{label}</p>
+        <p className="font-semibold text-lg">{value}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FilterChip({
+  children,
+  active,
+  onClick,
+  muted,
+}: {
+  children: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+  muted?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-full text-sm transition border ${
+        active
+          ? muted
+            ? "bg-gray-800 text-white border-gray-800"
+            : "bg-coles-red text-white border-coles-red"
+          : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Pagination({
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange: (p: number) => void;
+}) {
+  return (
+    <div className="flex justify-center items-center gap-2 mt-8 flex-wrap">
+      <Button variant="outline" size="sm" disabled={page === 1} onClick={() => onPageChange(page - 1)}>
+        Previous
+      </Button>
+      <span className="text-sm text-gray-600 px-2">
+        Page {page} of {totalPages}
+      </span>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={page === totalPages}
+        onClick={() => onPageChange(page + 1)}
+      >
+        Next
+      </Button>
+    </div>
+  );
+}
+
+function EmptyState({ searchQuery, onRefresh }: { searchQuery: string; onRefresh: () => void }) {
+  return (
+    <div className="text-center py-16 px-4">
+      <p className="text-gray-600 mb-2">
+        {searchQuery
+          ? `No deals match "${searchQuery}" for this week.`
+          : "No half-price deals for this week yet."}
+      </p>
+      <p className="text-sm text-gray-400 mb-6">
+        Specials refresh each Wednesday. Check back after the next scrape.
+      </p>
+      <Button variant="outline" onClick={onRefresh}>
+        Refresh deals
+      </Button>
+    </div>
+  );
+}
+
+function cnIcon(loading: boolean) {
+  return `h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`;
+}
 
 export default SampleDeals;
