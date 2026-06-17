@@ -17,7 +17,8 @@ jobs:
       SCRAPER_PROXY_URL: ${{ secrets.SCRAPER_PROXY_URL }}
       WOW_MAX_PAGES: ${{ vars.WOW_MAX_PAGES || '15' }}
       MIN_WOOLWORTHS_DEALS: ${{ vars.MIN_WOOLWORTHS_DEALS || '10' }}
-      MIN_COLES_DEALS: ${{ vars.MIN_COLES_DEALS || '10' }}
+      MIN_COLES_DEALS: ${{ vars.MIN_COLES_DEALS || '40' }}
+      COLES_MAX_PAGES: ${{ vars.COLES_MAX_PAGES || '25' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

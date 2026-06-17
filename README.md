@@ -13,7 +13,7 @@ GitHub Actions (daily) ──► scrape-woolworths.mjs (Node + AU proxy) ─┐
 
 Supabase Edge Functions (in `supabase/functions/`):
 
-- **coles-scraper** (cloud) — pulls Coles half-price specials by parsing the page's `__NEXT_DATA__`. Works from the datacenter edge IP without a proxy; falls back to `SCRAPER_PROXY_URL` if blocked.
+- **coles-scraper** (cloud) — paginates Coles half-price specials (`page=1..N`) and parses structured `searchResults.results` from `__NEXT_DATA__`, including real categories from Coles metadata. Works from the datacenter edge IP without a proxy; falls back to `SCRAPER_PROXY_URL` if blocked.
 - **woolworths-scraper** (cloud, optional) — same browse/category API logic as the Node script, but requires `SCRAPER_PROXY_URL` in Supabase secrets (Akamai blocks datacenter IPs).
 - **`scripts/scrape-woolworths.mjs`** (automated via GitHub Actions) — **primary Woolworths path**. Runs daily in CI with `SCRAPER_PROXY_URL` + `SUPABASE_SERVICE_ROLE_KEY` secrets. No manual local runs needed.
 - **send-deal-alerts** — emails subscribers about deals first seen since the last run, filtered by categories and minimum discount (Brevo).
