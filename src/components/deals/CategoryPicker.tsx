@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 type Props = {
   deal: DealWithOverride;
-  onCategoryChange: (dealId: string, categoryId: CategoryId | null) => void;
+  onCategoryChange: (deal: DealWithOverride, categoryId: CategoryId | null) => void;
   compact?: boolean;
   className?: string;
 };
@@ -26,9 +26,9 @@ export function CategoryPicker({ deal, onCategoryChange, compact, className }: P
       value={current}
       onValueChange={(value) => {
         if (value === "__auto__") {
-          onCategoryChange(deal.id, null);
+          onCategoryChange(deal, null);
         } else {
-          onCategoryChange(deal.id, value as CategoryId);
+          onCategoryChange(deal, value as CategoryId);
         }
       }}
     >
@@ -46,7 +46,7 @@ export function CategoryPicker({ deal, onCategoryChange, compact, className }: P
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="__auto__" className="text-xs">
-          ↺ Auto-detect
+          ↺ Auto-detect (saved for this product)
         </SelectItem>
         {CATEGORIES.map((cat) => (
           <SelectItem key={cat.id} value={cat.id} className="text-xs">
@@ -59,6 +59,9 @@ export function CategoryPicker({ deal, onCategoryChange, compact, className }: P
 }
 
 /** Apply override to a deal row in local state */
-export function applyCategoryOverride(deal: Deal, categoryId: CategoryId | null): DealWithOverride {
+export function applyCategoryOverrideLocal(
+  deal: DealWithOverride,
+  categoryId: CategoryId | null,
+): DealWithOverride {
   return { ...deal, display_category: categoryId };
 }

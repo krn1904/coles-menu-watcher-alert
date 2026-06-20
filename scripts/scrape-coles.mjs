@@ -19,6 +19,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { scrapeColesHalfPrice } from "./lib/coles-scrape.mjs";
+import {
+  applyCategoryOverrides,
+  loadProductCategoryOverrides,
+} from "./lib/category-overrides.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -126,7 +130,13 @@ async function main() {
       );
     }
 
-    const { inserted, updated, errors } = await upsertDeals(supabase, deals, weekStart);
+    const overrideMap = await loadProductCategoryOverrides(supabase, "coles");
+    const dealsToSave = applyCategoryOverrides(deals, overrideMap);
+    if (overrideMap.size > 0) {
+      console.log(`Applied ${overrideMap.size} saved category override(s) for Coles SKUs.`);
+    }
+
+    const { inserted, updated, errors } = await upsertDeals(supabase, dealsToSave, weekStart);
     const message = `Coles: fetched ${deals.length} (${pagesFetched} pages), inserted ${inserted}, updated ${updated}, failed ${errors.length}`;
     console.log(message);
     result = {

@@ -82,7 +82,7 @@ function StorePriceCell({
 type Props = {
   group: ComparisonGroup;
   compact?: boolean;
-  onCategoryChange: (dealId: string, categoryId: CategoryId | null) => void;
+  onCategoryChange: (deal: DealWithOverride, categoryId: CategoryId | null) => void;
 };
 
 export function ComparisonCard({ group, compact = true, onCategoryChange }: Props) {

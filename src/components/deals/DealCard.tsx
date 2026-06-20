@@ -13,7 +13,7 @@ const PLACEHOLDER_IMG =
 
 type Props = {
   deal: DealWithOverride;
-  onCategoryChange: (dealId: string, categoryId: CategoryId | null) => void;
+  onCategoryChange: (deal: DealWithOverride, categoryId: CategoryId | null) => void;
 };
 
 export function DealCard({ deal, onCategoryChange }: Props) {
@@ -38,7 +38,7 @@ export function DealCard({ deal, onCategoryChange }: Props) {
         </div>
         <CategoryPicker deal={deal} onCategoryChange={onCategoryChange} compact className="mb-1.5" />
         <p className="text-[10px] text-gray-500 mb-1">
-          {cat.emoji} {deal.display_category ? "Custom" : "Auto"}: {cat.label}
+          {cat.emoji} {deal.display_category ? "Saved" : "Auto"}: {cat.label}
         </p>
         <h3 className="font-medium line-clamp-2 text-sm flex-1 min-h-[2.5rem]">{deal.name}</h3>
         <div className="mt-2 flex items-end justify-between gap-2">

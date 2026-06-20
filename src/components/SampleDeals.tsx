@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { CATEGORIES, type CategoryId } from "@/lib/categories";
+import { mergeProductOverrides } from "@/lib/category-overrides";
 import {
   buildComparisonGroups,
   dealMatchesSearch,
@@ -63,42 +64,45 @@ const SampleDeals: React.FC = () => {
     let merged: Deal[] = rows;
 
     if (rows.length > 0) {
+      const stores = [...new Set(rows.map((d) => d.store).filter(Boolean))] as string[];
       const { data: overrides } = await supabase
-        .from("deal_category_overrides")
-        .select("deal_id, display_category")
-        .in(
-          "deal_id",
-          rows.map((d) => d.id),
-        );
+        .from("product_category_overrides")
+        .select("store, product_id, display_category")
+        .in("store", stores);
 
-      if (overrides?.length) {
-        const map = new Map(overrides.map((o) => [o.deal_id, o.display_category]));
-        merged = rows.map((d) => ({
-          ...d,
-          display_category: map.get(d.id) ?? null,
-        }));
-      }
+      merged = mergeProductOverrides(rows, overrides ?? []);
     }
 
     setDeals(merged);
     setLoading(false);
   }, []);
 
-  const handleCategoryChange = useCallback(async (dealId: string, categoryId: CategoryId | null) => {
+  const handleCategoryChange = useCallback(async (deal: Deal, categoryId: CategoryId | null) => {
+    if (!deal.store || !deal.product_id) return;
+
     setDeals((prev) =>
-      prev.map((d) => (d.id === dealId ? { ...d, display_category: categoryId } : d)),
+      prev.map((d) =>
+        d.store === deal.store && d.product_id === deal.product_id
+          ? { ...d, display_category: categoryId }
+          : d,
+      ),
     );
 
     if (categoryId === null) {
-      await supabase.from("deal_category_overrides").delete().eq("deal_id", dealId);
+      await supabase
+        .from("product_category_overrides")
+        .delete()
+        .eq("store", deal.store)
+        .eq("product_id", deal.product_id);
     } else {
-      await supabase.from("deal_category_overrides").upsert(
+      await supabase.from("product_category_overrides").upsert(
         {
-          deal_id: dealId,
+          store: deal.store,
+          product_id: deal.product_id,
           display_category: categoryId,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "deal_id" },
+        { onConflict: "store,product_id" },
       );
     }
   }, []);
@@ -252,7 +256,7 @@ const SampleDeals: React.FC = () => {
       </div>
 
       {!loading && storeCounts.coles > 0 && (
-        <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50/80 px-4 py-3 text-sm text-blue-900">
+        <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50/80 px-4 py-3 text-sm text-blue-900 space-y-1">
           <p>
             <strong>{storeCounts.coles}</strong> Coles vs <strong>{storeCounts.woolworths}</strong> Woolworths
             specials this week → <strong>{comparisonStats.paired}</strong> matched pairs
@@ -274,6 +278,9 @@ const SampleDeals: React.FC = () => {
               only&quot; to browse store-only specials, or search by brand name.
             </p>
           )}
+          <p className="text-xs text-blue-700/90">
+            Category changes you save are stored by product SKU and apply on future scrapes and new weeks.
+          </p>
         </div>
       )}
 

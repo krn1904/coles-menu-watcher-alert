@@ -54,19 +54,22 @@ export type Database = {
         }
         Relationships: []
       }
-      deal_category_overrides: {
+      product_category_overrides: {
         Row: {
-          deal_id: string
+          store: string
+          product_id: string
           display_category: string
           updated_at: string | null
         }
         Insert: {
-          deal_id: string
+          store: string
+          product_id: string
           display_category: string
           updated_at?: string | null
         }
         Update: {
-          deal_id?: string
+          store?: string
+          product_id?: string
           display_category?: string
           updated_at?: string | null
         }
