@@ -2,19 +2,23 @@ import { ExternalLink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CATEGORY_BY_ID, type CategoryId } from "@/lib/categories";
-import { type Deal, deriveCategory, discountLabel, formatPrice } from "@/lib/product-match";
+import { type DealWithOverride, discountLabel, formatPrice, getDealCategory } from "@/lib/product-match";
 import { getStoreSearchUrl, type StoreId } from "@/lib/store-links";
 import { StoreBadge } from "./StoreBadge";
+import { CategoryPicker } from "./CategoryPicker";
 import { cn } from "@/lib/utils";
 
 const PLACEHOLDER_IMG =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect fill='%23f3f4f6' width='200' height='200'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-family='sans-serif' font-size='14'%3ENo image%3C/text%3E%3C/svg%3E";
 
-type Props = { deal: Deal };
+type Props = {
+  deal: DealWithOverride;
+  onCategoryChange: (dealId: string, categoryId: CategoryId | null) => void;
+};
 
-export function DealCard({ deal }: Props) {
+export function DealCard({ deal, onCategoryChange }: Props) {
   const store = deal.store as StoreId;
-  const category = deriveCategory(deal.name, deal.category) as CategoryId;
+  const category = getDealCategory(deal);
   const cat = CATEGORY_BY_ID[category];
 
   return (
@@ -29,22 +33,25 @@ export function DealCard({ deal }: Props) {
         />
       </div>
       <CardContent className="p-3 flex flex-col flex-1">
-        <div className="flex items-center justify-between mb-1.5 gap-2">
-          <span className="text-[10px] text-gray-500 truncate">
-            {cat.emoji} {cat.label}
-          </span>
+        <div className="flex items-center justify-between mb-1.5 gap-1">
           {store && <StoreBadge store={store} />}
         </div>
+        <CategoryPicker deal={deal} onCategoryChange={onCategoryChange} compact className="mb-1.5" />
+        <p className="text-[10px] text-gray-500 mb-1">
+          {cat.emoji} {deal.display_category ? "Custom" : "Auto"}: {cat.label}
+        </p>
         <h3 className="font-medium line-clamp-2 text-sm flex-1 min-h-[2.5rem]">{deal.name}</h3>
         <div className="mt-2 flex items-end justify-between gap-2">
           <div>
             <span className="text-xs line-through text-gray-400 block">
               {formatPrice(deal.original_price)}
             </span>
-            <span className={cn(
-              "text-base font-bold",
-              store === "coles" ? "text-coles-red" : "text-woolies-green",
-            )}>
+            <span
+              className={cn(
+                "text-base font-bold",
+                store === "coles" ? "text-coles-red" : "text-woolies-green",
+              )}
+            >
               {formatPrice(deal.sale_price)}
             </span>
           </div>

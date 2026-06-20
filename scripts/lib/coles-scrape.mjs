@@ -119,22 +119,21 @@ function parseProductsFromPage(html) {
   };
 }
 
-async function fetchHalfPricePage(page, env, session) {
+async function fetchHalfPricePage(page, env, session, retries = 3) {
   const target = `${HALF_PRICE_BASE}&page=${page}`;
-  const useProxyOptions = proxyConfigured(env) ? [true] : [false];
   let lastHtml = "";
-  for (const useProxy of useProxyOptions) {
-    const res = useProxy
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const res = proxyConfigured(env)
       ? await proxiedFetch(target, { headers: PAGE_HEADERS }, env, session)
       : await fetch(target, { headers: PAGE_HEADERS });
     lastHtml = await res.text();
-    if (!res.ok) continue;
-    if (extractNextData(lastHtml)) return { html: lastHtml, ok: true };
+    if (res.ok && extractNextData(lastHtml)) return { html: lastHtml, ok: true };
+    if (attempt < retries) await sleep(400 * attempt);
   }
   return { html: lastHtml, ok: false };
 }
 
-export async function scrapeColesHalfPrice(env, { maxPages = 35, pageDelayMs = 250, onPage } = {}) {
+export async function scrapeColesHalfPrice(env, { maxPages = 45, pageDelayMs = 350, onPage } = {}) {
   if (!proxyConfigured(env)) {
     throw new Error(
       "SCRAPER_PROXY_URL is required for Coles (Incapsula blocks datacenter IPs). " +
@@ -147,22 +146,35 @@ export async function scrapeColesHalfPrice(env, { maxPages = 35, pageDelayMs = 2
   const seenIds = new Set();
   let assetsUrl = DEFAULT_ASSETS_URL;
   let pagesFetched = 0;
+  let pagesFailed = 0;
   let reportedTotal = null;
   let lastHtml = "";
+  let consecutiveEmpty = 0;
 
   for (let page = 1; page <= maxPages; page++) {
     const { html, ok } = await fetchHalfPricePage(page, env, session);
     lastHtml = html;
     if (!ok) {
+      pagesFailed++;
+      console.warn(`Coles page ${page} failed (${pagesFailed} failures) — continuing`);
       if (page === 1) break;
-      break;
+      if (pagesFailed >= 5) break;
+      continue;
     }
 
     const parsed = parseProductsFromPage(html);
     if (parsed.assetsUrl) assetsUrl = parsed.assetsUrl;
-    if (typeof parsed.noOfResults === "number") reportedTotal = parsed.noOfResults;
+    if (typeof parsed.noOfResults === "number") {
+      reportedTotal =
+        reportedTotal == null ? parsed.noOfResults : Math.max(reportedTotal, parsed.noOfResults);
+    }
 
-    if (parsed.products.length === 0) break;
+    if (parsed.products.length === 0) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty >= 2) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
 
     pagesFetched++;
     let added = 0;
@@ -177,7 +189,7 @@ export async function scrapeColesHalfPrice(env, { maxPages = 35, pageDelayMs = 2
     }
 
     onPage?.(page, added, rawProducts.length, reportedTotal);
-    if (reportedTotal != null && rawProducts.length >= reportedTotal) break;
+    // Do not stop when rawProducts >= reportedTotal — Coles noOfResults is unreliable mid-pagination.
     if (page < maxPages && pageDelayMs > 0) await sleep(pageDelayMs);
   }
 
@@ -209,8 +221,9 @@ export async function scrapeColesHalfPrice(env, { maxPages = 35, pageDelayMs = 2
   return {
     deals,
     pagesFetched,
+    pagesFailed,
     reportedTotal,
     fetched: deals.length,
-    truncated: reportedTotal != null && rawProducts.length < reportedTotal,
+    truncated: pagesFailed > 0 || pagesFetched >= maxPages,
   };
 }

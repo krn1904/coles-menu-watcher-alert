@@ -1,13 +1,15 @@
 import { ExternalLink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CATEGORY_BY_ID } from "@/lib/categories";
+import { CATEGORY_BY_ID, type CategoryId } from "@/lib/categories";
 import {
   type ComparisonGroup,
-  type Deal,
+  type DealWithOverride,
   formatPrice,
+  getDealCategory,
 } from "@/lib/product-match";
 import { getStoreSearchUrl, STORE_META } from "@/lib/store-links";
+import { CategoryPicker } from "./CategoryPicker";
 import { cn } from "@/lib/utils";
 
 const PLACEHOLDER_IMG =
@@ -20,7 +22,7 @@ function StorePriceCell({
   compact,
 }: {
   store: "coles" | "woolworths";
-  deal?: Deal;
+  deal?: DealWithOverride;
   isWinner: boolean;
   compact?: boolean;
 }) {
@@ -77,10 +79,16 @@ function StorePriceCell({
   );
 }
 
-type Props = { group: ComparisonGroup; compact?: boolean };
+type Props = {
+  group: ComparisonGroup;
+  compact?: boolean;
+  onCategoryChange: (dealId: string, categoryId: CategoryId | null) => void;
+};
 
-export function ComparisonCard({ group, compact = true }: Props) {
-  const cat = CATEGORY_BY_ID[group.category];
+export function ComparisonCard({ group, compact = true, onCategoryChange }: Props) {
+  const primaryDeal = group.coles ?? group.woolworths;
+  const category = primaryDeal ? getDealCategory(primaryDeal) : group.category;
+  const cat = CATEGORY_BY_ID[category];
   const hasBoth = Boolean(group.coles && group.woolworths);
   const winner = group.cheaperStore;
   const heroDeal = group.coles ?? group.woolworths;
@@ -120,9 +128,13 @@ export function ComparisonCard({ group, compact = true }: Props) {
           )}
         </div>
 
-        <h3 className="font-medium text-sm line-clamp-2 leading-snug flex-1 min-h-[2.5rem]">
+        <h3 className="font-medium text-sm line-clamp-2 leading-snug min-h-[2.5rem]">
           {group.canonicalName}
         </h3>
+
+        {primaryDeal && (
+          <CategoryPicker deal={primaryDeal} onCategoryChange={onCategoryChange} compact />
+        )}
 
         <div className="flex gap-1.5 mt-auto">
           <StorePriceCell

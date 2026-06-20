@@ -97,8 +97,8 @@ async function main() {
     process.exit(1);
   }
 
-  const maxPages = Number(env.COLES_MAX_PAGES || "35");
-  const pageDelayMs = Number(env.COLES_PAGE_DELAY_MS || "250");
+  const maxPages = Number(env.COLES_MAX_PAGES || "45");
+  const pageDelayMs = Number(env.COLES_PAGE_DELAY_MS || "350");
   const minDeals = Number(env.MIN_COLES_DEALS || "40");
   const supabase = createClient(url, key);
   const weekStart = getWeekStart();

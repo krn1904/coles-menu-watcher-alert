@@ -5,21 +5,22 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import type { Database } from "@/integrations/supabase/types";
 import { CATEGORIES, type CategoryId } from "@/lib/categories";
 import {
   buildComparisonGroups,
   dealMatchesSearch,
-  deriveCategory,
   formatWeekStart,
   getCurrentWeekStart,
   getCheaperStore,
+  getDealCategory,
   type ComparisonGroup,
+  type DealWithOverride,
 } from "@/lib/product-match";
+import type { CategoryId } from "@/lib/categories";
 import { ComparisonCard } from "@/components/deals/ComparisonCard";
 import { DealCard } from "@/components/deals/DealCard";
 
-type Deal = Database["public"]["Tables"]["deals"]["Row"];
+type Deal = DealWithOverride;
 type ViewMode = "compare" | "browse";
 type StoreFilter = "all" | "coles" | "woolworths";
 type SortMode = "savings" | "discount" | "price" | "name";
@@ -57,8 +58,49 @@ const SampleDeals: React.FC = () => {
       setLoading(false);
       return;
     }
-    setDeals(data ?? []);
+
+    const rows = data ?? [];
+    let merged: Deal[] = rows;
+
+    if (rows.length > 0) {
+      const { data: overrides } = await supabase
+        .from("deal_category_overrides")
+        .select("deal_id, display_category")
+        .in(
+          "deal_id",
+          rows.map((d) => d.id),
+        );
+
+      if (overrides?.length) {
+        const map = new Map(overrides.map((o) => [o.deal_id, o.display_category]));
+        merged = rows.map((d) => ({
+          ...d,
+          display_category: map.get(d.id) ?? null,
+        }));
+      }
+    }
+
+    setDeals(merged);
     setLoading(false);
+  }, []);
+
+  const handleCategoryChange = useCallback(async (dealId: string, categoryId: CategoryId | null) => {
+    setDeals((prev) =>
+      prev.map((d) => (d.id === dealId ? { ...d, display_category: categoryId } : d)),
+    );
+
+    if (categoryId === null) {
+      await supabase.from("deal_category_overrides").delete().eq("deal_id", dealId);
+    } else {
+      await supabase.from("deal_category_overrides").upsert(
+        {
+          deal_id: dealId,
+          display_category: categoryId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "deal_id" },
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -77,12 +119,20 @@ const SampleDeals: React.FC = () => {
     [deals],
   );
 
+  const dealsForCategoryCounts = useMemo(() => {
+    let list = deals.filter((d) => dealMatchesSearch(d, searchQuery));
+    if (viewMode === "browse" && storeFilter !== "all") {
+      list = list.filter((d) => d.store === storeFilter);
+    }
+    return list;
+  }, [deals, searchQuery, storeFilter, viewMode]);
+
   const comparisonGroups = useMemo(() => {
     const searched = deals.filter((d) => dealMatchesSearch(d, searchQuery));
     const byCategory =
       categoryFilter === "all"
         ? searched
-        : searched.filter((d) => deriveCategory(d.name, d.category) === categoryFilter);
+        : searched.filter((d) => getDealCategory(d) === categoryFilter);
     return buildComparisonGroups(byCategory, { pairedOnly });
   }, [deals, searchQuery, categoryFilter, pairedOnly]);
 
@@ -142,7 +192,7 @@ const SampleDeals: React.FC = () => {
     let list = deals.filter((d) => dealMatchesSearch(d, searchQuery));
     if (storeFilter !== "all") list = list.filter((d) => d.store === storeFilter);
     if (categoryFilter !== "all") {
-      list = list.filter((d) => deriveCategory(d.name, d.category) === categoryFilter);
+      list = list.filter((d) => getDealCategory(d) === categoryFilter);
     }
     list.sort((a, b) => {
       if (sortMode === "price") return a.sale_price - b.sale_price;
@@ -157,12 +207,14 @@ const SampleDeals: React.FC = () => {
 
   const categoryCounts = useMemo(() => {
     const counts = new Map<CategoryId, number>();
-    for (const d of deals) {
-      const cat = deriveCategory(d.name, d.category);
+    for (const d of dealsForCategoryCounts) {
+      const cat = getDealCategory(d);
       counts.set(cat, (counts.get(cat) ?? 0) + 1);
     }
     return counts;
-  }, [deals]);
+  }, [dealsForCategoryCounts]);
+
+  const allFilteredCount = dealsForCategoryCounts.length;
 
   const pageSize = viewMode === "compare" ? COMPARE_PAGE_SIZE : BROWSE_PAGE_SIZE;
   const itemCount = viewMode === "compare" ? sortedGroups.length : browseDeals.length;
@@ -170,7 +222,8 @@ const SampleDeals: React.FC = () => {
   const paginatedGroups = sortedGroups.slice((page - 1) * pageSize, page * pageSize);
   const paginatedDeals = browseDeals.slice((page - 1) * pageSize, page * pageSize);
 
-  const visibleCategories = CATEGORIES.filter((c) => (categoryCounts.get(c.id) ?? 0) > 0);
+  const visibleCategories = CATEGORIES.filter((c) => (categoryCounts.get(c.id) ?? 0) > 0)
+    .sort((a, b) => (categoryCounts.get(b.id) ?? 0) - (categoryCounts.get(a.id) ?? 0));
 
   return (
     <div>
@@ -208,10 +261,11 @@ const SampleDeals: React.FC = () => {
             )}
             .
           </p>
-          {storeCounts.coles < 300 && (
+          {storeCounts.coles < 400 && (
             <p className="mt-1 text-blue-800">
-              Coles count looks low — re-run the daily scraper after the latest fix (Coles was dropping items
-              missing a &quot;was&quot; price). Expect 800+ after the next scrape.
+              Coles count is still low. Ensure the workflow runs from the latest branch, then re-run
+              the scraper. The latest Coles fix paginates through all pages (not stopping early at
+              ~137). Check the workflow log for <code className="text-xs">Coles: fetched N</code>.
             </p>
           )}
           {comparisonStats.paired < 30 && storeCounts.coles > 50 && (
@@ -265,7 +319,7 @@ const SampleDeals: React.FC = () => {
 
       <div className="flex flex-wrap gap-2 mb-4">
         <FilterChip active={categoryFilter === "all"} onClick={() => setCategoryFilter("all")}>
-          All categories
+          All categories ({allFilteredCount})
         </FilterChip>
         {visibleCategories.map((cat) => (
           <FilterChip
@@ -321,13 +375,17 @@ const SampleDeals: React.FC = () => {
           {viewMode === "compare" ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
               {paginatedGroups.map((group: ComparisonGroup) => (
-                <ComparisonCard key={group.key} group={group} />
+                <ComparisonCard
+                  key={group.key}
+                  group={group}
+                  onCategoryChange={handleCategoryChange}
+                />
               ))}
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
               {paginatedDeals.map((deal) => (
-                <DealCard key={deal.id} deal={deal} />
+                <DealCard key={deal.id} deal={deal} onCategoryChange={handleCategoryChange} />
               ))}
             </div>
           )}

@@ -1,5 +1,5 @@
 import type { Database } from "@/integrations/supabase/types";
-import { CATEGORY_RULES, type CategoryId } from "./categories";
+import { CATEGORY_RULES, isCategoryId, type CategoryId } from "./categories";
 import { getBrandKeyFromNormalized } from "./brands";
 
 export type Deal = Database["public"]["Tables"]["deals"]["Row"];
@@ -29,18 +29,28 @@ const TOKEN_STOPWORDS = new Set([
 ]);
 
 const DB_CATEGORY_MAP: Array<{ category: CategoryId; pattern: RegExp }> = [
+  { category: "clothing", pattern: /clothing|apparel|fashion|sleepwear/i },
   { category: "baby-kids", pattern: /baby|napp|infant/i },
   { category: "personal-care", pattern: /health|beauty|personal|hair|skin|oral/i },
   { category: "household-cleaning", pattern: /household|clean|laundry|paper/i },
   { category: "pet", pattern: /pet/i },
   { category: "dairy-eggs", pattern: /dairy|milk|cheese|egg/i },
   { category: "drinks", pattern: /drink|beverage|liquor/i },
-  { category: "frozen", pattern: /frozen/i },
+  { category: "frozen", pattern: /frozen food|freezer/i },
   { category: "meat-seafood", pattern: /meat|seafood|deli/i },
   { category: "fresh-produce", pattern: /fruit|vegetable|produce/i },
   { category: "bakery", pattern: /bakery|bread/i },
-  { category: "pantry-snacks", pattern: /pantry|grocery|snack|confectionery/i },
+  // Do NOT map generic "Groceries" → pantry (mislabels clothing etc.)
 ];
+
+export type DealWithOverride = Deal & { display_category?: string | null };
+
+export function getDealCategory(deal: DealWithOverride): CategoryId {
+  if (deal.display_category && isCategoryId(deal.display_category)) {
+    return deal.display_category;
+  }
+  return deriveCategory(deal.name, deal.category);
+}
 
 export function formatPrice(price: number): string {
   return `$${price.toFixed(2)}`;
@@ -132,8 +142,8 @@ function brandsCompatible(a: string, b: string): boolean {
 export function scorePair(a: Deal, b: Deal): { score: number; shared: number; confidence: ComparisonConfidence } {
   const tokensA = getSignificantTokens(a.name);
   const tokensB = getSignificantTokens(b.name);
-  const categoryA = deriveCategory(a.name, a.category);
-  const categoryB = deriveCategory(b.name, b.category);
+  const categoryA = getDealCategory(a);
+  const categoryB = getDealCategory(b);
   const brandA = getBrandKey(a.name);
   const brandB = getBrandKey(b.name);
   const shared = sharedTokenCount(tokensA, tokensB);
@@ -255,7 +265,7 @@ export function buildComparisonGroups(
     usedColes.add(c.coles.id);
     usedWoolies.add(c.woolworths.id);
 
-    const category = deriveCategory(c.coles.name, c.coles.category);
+    const category = getDealCategory(c.coles);
     const cheaper = getCheaperStore(c.coles, c.woolworths);
     groups.push({
       key: `${c.coles.id}-${c.woolworths.id}`,
@@ -277,7 +287,7 @@ export function buildComparisonGroups(
       groups.push({
         key: `${coles.id}-solo-coles`,
         canonicalName: coles.name,
-        category: deriveCategory(coles.name, coles.category),
+        category: getDealCategory(coles),
         confidence: "low",
         matchScore: 0,
         coles,
@@ -288,7 +298,7 @@ export function buildComparisonGroups(
       groups.push({
         key: `${woolworths.id}-solo-woolies`,
         canonicalName: woolworths.name,
-        category: deriveCategory(woolworths.name, woolworths.category),
+        category: getDealCategory(woolworths),
         confidence: "low",
         matchScore: 0,
         woolworths,
