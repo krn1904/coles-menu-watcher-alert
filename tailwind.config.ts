@@ -70,6 +70,10 @@ export default {
 					dark: '#333333',
 					yellow: '#ffcc00',
 					gray: '#f0f0f0'
+				},
+				woolies: {
+					green: '#178841',
+					light: '#e8f5ec',
 				}
 			},
 			borderRadius: {

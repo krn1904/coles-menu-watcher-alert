@@ -20,6 +20,7 @@ const HALF_PRICE_URL = "/shop/browse/specials/half-price";
 const FALLBACK_CATEGORY_ID = "specialsgroup.3676";
 const PAGE_SIZE = 36; // Woolworths' browse API caps page size at 36.
 const MAX_PAGES = Number(Deno.env.get("WOW_MAX_PAGES") || "15");
+const MIN_WOOLWORTHS_DEALS = Number(Deno.env.get("MIN_WOOLWORTHS_DEALS") || "10");
 
 type WoolworthsProduct = {
   Name?: string;
@@ -220,9 +221,32 @@ serve(async (req) => {
 
     if (deals.length === 0) {
       const msg = "Woolworths returned no half-price specials (check proxy/cookies or page shape).";
-      await logFetch(supabase, "woolworths", false, msg, { fetched: 0, inserted: 0, updated: 0, errors: [msg] });
+      await logFetch(supabase, "woolworths", false, msg, {
+        fetched: 0,
+        inserted: 0,
+        updated: 0,
+        week_start: weekStart,
+        min_expected: MIN_WOOLWORTHS_DEALS,
+        errors: [msg],
+      });
       return jsonResponse(
         { success: false, store: "woolworths", fetched: 0, inserted: 0, updated: 0, errors: [msg] },
+        502,
+      );
+    }
+
+    if (deals.length < MIN_WOOLWORTHS_DEALS) {
+      const msg = `Woolworths fetched too few deals (${deals.length}). Proxy/session may be blocked.`;
+      await logFetch(supabase, "woolworths", false, msg, {
+        fetched: deals.length,
+        inserted: 0,
+        updated: 0,
+        week_start: weekStart,
+        min_expected: MIN_WOOLWORTHS_DEALS,
+        errors: [msg],
+      });
+      return jsonResponse(
+        { success: false, store: "woolworths", fetched: deals.length, inserted: 0, updated: 0, errors: [msg] },
         502,
       );
     }
@@ -233,6 +257,8 @@ serve(async (req) => {
       fetched: deals.length,
       inserted,
       updated,
+      week_start: weekStart,
+      min_expected: MIN_WOOLWORTHS_DEALS,
       errors,
     });
 
@@ -242,7 +268,14 @@ serve(async (req) => {
     );
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown Woolworths scraper error";
-    await logFetch(supabase, "woolworths", false, msg, { fetched: 0, inserted: 0, updated: 0, errors: [msg] });
+    await logFetch(supabase, "woolworths", false, msg, {
+      fetched: 0,
+      inserted: 0,
+      updated: 0,
+      week_start: weekStart,
+      min_expected: MIN_WOOLWORTHS_DEALS,
+      errors: [msg],
+    });
     return jsonResponse(
       { success: false, store: "woolworths", fetched: 0, inserted: 0, updated: 0, errors: [msg] },
       500,

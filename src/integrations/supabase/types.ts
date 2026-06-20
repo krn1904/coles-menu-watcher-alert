@@ -54,6 +54,27 @@ export type Database = {
         }
         Relationships: []
       }
+      product_category_overrides: {
+        Row: {
+          store: string
+          product_id: string
+          display_category: string
+          updated_at: string | null
+        }
+        Insert: {
+          store: string
+          product_id: string
+          display_category: string
+          updated_at?: string | null
+        }
+        Update: {
+          store?: string
+          product_id?: string
+          display_category?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       fetch_logs: {
         Row: {
           created_at: string | null

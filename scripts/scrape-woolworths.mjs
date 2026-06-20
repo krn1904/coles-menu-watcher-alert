@@ -10,13 +10,18 @@
 // Env (read from supabase/.env.local, or the real environment):
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   (required)
 //   SCRAPER_PROXY_URL                         (required)
-//   WOW_MAX_PAGES                             (optional, default 15)
+//   WOW_MAX_PAGES                             (optional, default 60)
+//   MIN_WOOLWORTHS_DEALS                      (optional, default 10)
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { scrapeWoolworthsHalfPrice } from "./lib/woolworths-scrape.mjs";
+import {
+  applyCategoryOverrides,
+  loadProductCategoryOverrides,
+} from "./lib/category-overrides.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -95,13 +100,14 @@ async function main() {
     process.exit(1);
   }
 
-  const maxPages = Number(env.WOW_MAX_PAGES || "15");
+  const maxPages = Number(env.WOW_MAX_PAGES || "60");
+  const minDeals = Number(env.MIN_WOOLWORTHS_DEALS || "10");
   const supabase = createClient(url, key);
   const weekStart = getWeekStart();
 
   let result;
   try {
-    const { deals, categoryId } = await scrapeWoolworthsHalfPrice(env, {
+    const { deals, categoryId, reportedTotal, rawCount, truncated } = await scrapeWoolworthsHalfPrice(env, {
       maxPages,
       onPage: (page, count, total, expected) => {
         process.stdout.write(`  page ${page}: +${count} (total ${total}/${expected})\n`);
@@ -109,7 +115,23 @@ async function main() {
     });
     console.log(`Half-price category: ${categoryId}`);
 
-    const { inserted, updated, errors } = await upsertDeals(supabase, deals, weekStart);
+    if (truncated) {
+      console.warn(
+        `Woolworths: stopped at ${rawCount} products (${deals.length} deals) before reported total ${reportedTotal} (raise WOW_MAX_PAGES, currently ${maxPages}).`,
+      );
+    }
+
+    if (deals.length < minDeals) {
+      throw new Error(`Woolworths fetched too few deals (${deals.length} < ${minDeals}).`);
+    }
+
+    const overrideMap = await loadProductCategoryOverrides(supabase, "woolworths");
+    const dealsToSave = applyCategoryOverrides(deals, overrideMap);
+    if (overrideMap.size > 0) {
+      console.log(`Applied ${overrideMap.size} saved category override(s) for Woolworths SKUs.`);
+    }
+
+    const { inserted, updated, errors } = await upsertDeals(supabase, dealsToSave, weekStart);
     const message = `Woolworths: fetched ${deals.length}, inserted ${inserted}, updated ${updated}, failed ${errors.length}`;
     console.log(message);
     result = { success: errors.length === 0, fetched: deals.length, inserted, updated, errors };
@@ -124,7 +146,7 @@ async function main() {
       store: "woolworths",
       success: result.success,
       message: result.errors.length ? result.errors[0] : `inserted ${result.inserted}, updated ${result.updated}`,
-      data: result,
+      data: { ...result, week_start: weekStart, min_expected: minDeals },
       created_at: new Date().toISOString(),
     },
   ]);

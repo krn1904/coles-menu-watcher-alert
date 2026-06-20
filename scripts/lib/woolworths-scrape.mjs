@@ -1,5 +1,6 @@
 // Woolworths half-price scrape logic shared by the local script and tests.
 import { proxyConfigured, proxiedFetch } from "./proxy.mjs";
+import { categorizeProductName } from "./categorize-product.mjs";
 
 export const ORIGIN = "https://www.woolworths.com.au";
 export const HALF_PRICE_URL = "/shop/browse/specials/half-price";
@@ -137,7 +138,7 @@ export function normalizeProducts(raw) {
       brand && !name.toLowerCase().startsWith(brand.toLowerCase()) ? `${brand} ${name}` : name;
     deals.push({
       name: fullName,
-      category: "Groceries",
+      category: categorizeProductName(fullName),
       original_price: was,
       sale_price: sale,
       discount_percentage: discountPct(was, sale),
@@ -149,7 +150,7 @@ export function normalizeProducts(raw) {
   return deals;
 }
 
-export async function scrapeWoolworthsHalfPrice(env, { maxPages = 15, onPage } = {}) {
+export async function scrapeWoolworthsHalfPrice(env, { maxPages = 60, onPage } = {}) {
   if (!proxyConfigured(env)) {
     throw new Error(
       "SCRAPER_PROXY_URL is required for Woolworths (Akamai blocks datacenter IPs). " +
@@ -178,5 +179,12 @@ export async function scrapeWoolworthsHalfPrice(env, { maxPages = 15, onPage } =
     throw new Error("No half-price specials parsed (page shape changed or proxy blocked).");
   }
 
-  return { deals, categoryId, fetched: deals.length };
+  return {
+    deals,
+    categoryId,
+    fetched: deals.length,
+    reportedTotal: Number.isFinite(total) ? total : null,
+    rawCount: raw.length,
+    truncated: Number.isFinite(total) && raw.length < total,
+  };
 }

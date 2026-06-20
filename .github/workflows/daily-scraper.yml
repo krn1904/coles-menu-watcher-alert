@@ -1,9 +1,10 @@
-name: Daily Deal Scraper
+name: Weekly Deal Scraper
 
 on:
   schedule:
-    # 19:00 UTC = ~5am AEST — after overnight specials refresh; Wednesdays get fresh Woolworths specials
-    - cron: '0 19 * * *'
+    # Wednesday 8:00 AM AEST/AEDT — after Coles/Woolworths weekly specials refresh
+    - cron: '0 8 * * 3'
+      timezone: Australia/Sydney
   workflow_dispatch:
 
 jobs:
@@ -15,7 +16,11 @@ jobs:
       ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SCRAPER_PROXY_URL: ${{ secrets.SCRAPER_PROXY_URL }}
-      WOW_MAX_PAGES: ${{ vars.WOW_MAX_PAGES || '15' }}
+      WOW_MAX_PAGES: ${{ vars.WOW_MAX_PAGES || '60' }}
+      MIN_WOOLWORTHS_DEALS: ${{ vars.MIN_WOOLWORTHS_DEALS || '10' }}
+      MIN_COLES_DEALS: ${{ vars.MIN_COLES_DEALS || '40' }}
+      COLES_MAX_PAGES: ${{ vars.COLES_MAX_PAGES || '45' }}
+      COLES_PAGE_DELAY_MS: ${{ vars.COLES_PAGE_DELAY_MS || '350' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,16 +54,13 @@ jobs:
           fi
           node scripts/scrape-woolworths.mjs
 
-      - name: Scrape Coles (Supabase Edge Function)
+      - name: Scrape Coles (proxied Node script)
         run: |
-          response=$(curl -sS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/coles-scraper" \
-            -H "Authorization: Bearer ${ANON_KEY}" \
-            -H "Content-Type: application/json" --data '{}')
-          echo "$response"
-          echo "$response" | node -e "
-            const r = JSON.parse(require('fs').readFileSync(0,'utf8'));
-            if (!r.success && r.fetched === 0) process.exit(1);
-          "
+          if [[ -z "${SCRAPER_PROXY_URL}" || -z "${SUPABASE_SERVICE_ROLE_KEY}" ]]; then
+            echo "Missing SCRAPER_PROXY_URL or SUPABASE_SERVICE_ROLE_KEY — Coles cannot run without an AU proxy."
+            exit 1
+          fi
+          node scripts/scrape-coles.mjs
 
       - name: Send email alerts for new deals
         run: |

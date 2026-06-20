@@ -10,64 +10,68 @@ import {
   proxyConfigured,
   upsertDeals,
   logFetch,
-  discountPct,
   type NormalizedDeal,
 } from "../_shared/deals.ts";
+import {
+  type ColesProduct,
+  collectProducts,
+  extractNextData,
+  findAssetsUrl,
+  getSearchResults,
+  productToDeal,
+} from "../_shared/coles.ts";
 
 const PAGE_HEADERS = {
   ...BROWSER_HEADERS,
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
+const HALF_PRICE_BASE = "https://www.coles.com.au/on-special?filter_Special=halfprice";
+const MIN_COLES_DEALS = Number(Deno.env.get("MIN_COLES_DEALS") || "40");
+const MAX_PAGES = Number(Deno.env.get("COLES_MAX_PAGES") || "25");
+const PAGE_DELAY_MS = Number(Deno.env.get("COLES_PAGE_DELAY_MS") || "250");
 
-// Recursively walk parsed JSON looking for Coles product objects. Coles product
-// nodes look like { _type:'PRODUCT', name, brand, pricing:{ now, was }, ... }.
-// Walking defensively keeps the scraper working across minor shape changes.
-type ColesProduct = {
-  name?: string;
-  brand?: string;
-  pricing?: { now?: number; was?: number; saveStatement?: string };
-  imageUris?: Array<{ uri?: string; altText?: string }>;
-  id?: string | number;
-  productId?: string | number;
-};
-
-function collectProducts(node: unknown, out: ColesProduct[], seen = new Set<unknown>()): void {
-  if (!node || typeof node !== "object" || seen.has(node)) return;
-  seen.add(node);
-  const obj = node as Record<string, unknown>;
-  const pricing = obj.pricing as ColesProduct["pricing"] | undefined;
-  if (typeof obj.name === "string" && pricing && typeof pricing.now === "number") {
-    out.push(obj as ColesProduct);
-  }
-  for (const v of Object.values(obj)) {
-    if (Array.isArray(v)) v.forEach((item) => collectProducts(item, out, seen));
-    else if (v && typeof v === "object") collectProducts(v, out, seen);
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Find the product-image CDN base ("assetsUrl") anywhere in the parsed page data.
-function findAssetsUrl(node: unknown, seen = new Set<unknown>()): string | null {
-  if (!node || typeof node !== "object" || seen.has(node)) return null;
-  seen.add(node);
-  const obj = node as Record<string, unknown>;
-  if (typeof obj.assetsUrl === "string" && obj.assetsUrl.includes("productimages")) {
-    return obj.assetsUrl;
+async function fetchHalfPricePage(
+  page: number,
+  session?: string,
+): Promise<{ html: string; ok: boolean }> {
+  const target = `${HALF_PRICE_BASE}&page=${page}`;
+  const useProxyOptions = proxyConfigured() ? [false, true] : [false];
+  let lastHtml = "";
+  for (const useProxy of useProxyOptions) {
+    const res = useProxy
+      ? await proxiedFetch(target, { headers: PAGE_HEADERS }, session)
+      : await fetch(target, { headers: PAGE_HEADERS });
+    lastHtml = await res.text();
+    if (!res.ok) continue;
+    if (extractNextData(lastHtml)) return { html: lastHtml, ok: true };
   }
-  for (const v of Object.values(obj)) {
-    const found = findAssetsUrl(v, seen);
-    if (found) return found;
-  }
-  return null;
+  return { html: lastHtml, ok: false };
 }
 
-function extractNextData(html: string): unknown | null {
-  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-  if (!m) return null;
-  try {
-    return JSON.parse(m[1]);
-  } catch {
-    return null;
+function parseProductsFromPage(html: string): {
+  products: ColesProduct[];
+  assetsUrl: string | null;
+  noOfResults: number | null;
+} {
+  const nextData = extractNextData(html);
+  if (!nextData) return { products: [], assetsUrl: null, noOfResults: null };
+
+  const searchResults = getSearchResults(nextData);
+  let products = searchResults?.results ?? [];
+  if (products.length === 0) {
+    products = [];
+    collectProducts(nextData, products);
   }
+
+  return {
+    products,
+    assetsUrl: findAssetsUrl(nextData),
+    noOfResults: searchResults?.noOfResults ?? null,
+  };
 }
 
 serve(async (req) => {
@@ -75,31 +79,45 @@ serve(async (req) => {
 
   const supabase = getServiceClient();
   const weekStart = getWeekStart();
+  const session = proxyConfigured() ? `coles-${Date.now()}` : undefined;
 
   try {
-    // Coles "Half Price" specials search page (server-rendered with __NEXT_DATA__).
-    // Coles works from the edge IP directly, so we fetch direct first and only
-    // fall back to the proxy (if configured) when the direct response looks
-    // blocked. This keeps proxy credits for Woolworths, which actually needs them.
-    const target = "https://www.coles.com.au/on-special?filter_Special=halfprice";
-
-    let nextData: unknown | null = null;
+    const rawProducts: ColesProduct[] = [];
+    const seenIds = new Set<string>();
+    let assetsUrl = "https://cdn.productimages.coles.com.au/productimages";
+    let pagesFetched = 0;
+    let reportedTotal: number | null = null;
     let lastHtml = "";
-    const useProxyOptions = proxyConfigured() ? [false, true] : [false];
-    for (const useProxy of useProxyOptions) {
-      const res = useProxy
-        ? await proxiedFetch(target, { headers: PAGE_HEADERS })
-        : await fetch(target, { headers: PAGE_HEADERS });
-      lastHtml = await res.text();
-      if (!res.ok) continue;
-      // The real page embeds product data in __NEXT_DATA__. Note: a legitimate
-      // Coles page also references "_Incapsula_Resource" in a script tag, so the
-      // presence of that string is NOT a reliable block signal.
-      nextData = extractNextData(lastHtml);
-      if (nextData) break;
+
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const { html, ok } = await fetchHalfPricePage(page, session);
+      lastHtml = html;
+      if (!ok) {
+        if (page === 1) break;
+        // Transient block/rate-limit on later pages: keep what we already fetched.
+        break;
+      }
+
+      const parsed = parseProductsFromPage(html);
+      if (parsed.assetsUrl) assetsUrl = parsed.assetsUrl;
+      if (typeof parsed.noOfResults === "number") reportedTotal = parsed.noOfResults;
+
+      if (parsed.products.length === 0) break;
+
+      pagesFetched++;
+      for (const product of parsed.products) {
+        const id = String(product.id ?? product.productId ?? "");
+        if (id) {
+          if (seenIds.has(id)) continue;
+          seenIds.add(id);
+        }
+        rawProducts.push(product);
+      }
+
+      if (page < MAX_PAGES && PAGE_DELAY_MS > 0) await sleep(PAGE_DELAY_MS);
     }
 
-    if (!nextData) {
+    if (pagesFetched === 0) {
       const challenged = /Request unsuccessful|Incapsula incident|incident ID/i.test(lastHtml);
       throw new Error(
         challenged || !proxyConfigured()
@@ -108,58 +126,70 @@ serve(async (req) => {
       );
     }
 
-    const products: ColesProduct[] = [];
-    collectProducts(nextData, products);
-
-    // Coles serves product images from a CDN, exposed as "assetsUrl" in the
-    // page data (e.g. https://cdn.productimages.coles.com.au/productimages).
-    // imageUris hold relative paths like "/1/1251527.jpg".
-    const assetsUrl = findAssetsUrl(nextData) || "https://cdn.productimages.coles.com.au/productimages";
-
     const deals: NormalizedDeal[] = [];
-    for (const p of products) {
-      const sale = Number(p.pricing?.now || 0);
-      const was = Number(p.pricing?.was || 0);
-      if (!sale) continue;
-      // Keep only genuine half-price-ish specials.
-      if (!was || was <= sale) continue;
-
-      const name = [p.brand, p.name].filter(Boolean).join(" ").trim() || (p.name ?? "").trim();
-      const productId = String(p.id ?? p.productId ?? name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
-      const img = p.imageUris?.find((i) => i.uri)?.uri || "";
-      const imageUrl = !img
-        ? ""
-        : img.startsWith("http")
-        ? img
-        : `${assetsUrl}${img.startsWith("/") ? "" : "/"}${img}`;
+    for (const product of rawProducts) {
+      const deal = productToDeal(product, assetsUrl);
+      if (!deal) continue;
       deals.push({
-        name,
-        category: "Groceries",
-        original_price: was,
-        sale_price: sale,
-        discount_percentage: discountPct(was, sale),
-        image_url: imageUrl,
+        ...deal,
         store: "coles",
-        product_id: productId,
       });
     }
 
+    if (deals.length < MIN_COLES_DEALS) {
+      const msg = `Coles fetched too few deals (${deals.length} from ${pagesFetched} pages). Possible block or page-shape change.`;
+      await logFetch(supabase, "coles", false, msg, {
+        fetched: deals.length,
+        inserted: 0,
+        updated: 0,
+        week_start: weekStart,
+        pages_fetched: pagesFetched,
+        reported_total: reportedTotal,
+        min_expected: MIN_COLES_DEALS,
+        errors: [msg],
+      });
+      return jsonResponse(
+        { success: false, store: "coles", fetched: deals.length, inserted: 0, updated: 0, errors: [msg] },
+        502,
+      );
+    }
+
     const { inserted, updated, errors } = await upsertDeals(supabase, deals, weekStart);
-    const message = `Coles: fetched ${deals.length}, inserted ${inserted}, updated ${updated}, failed ${errors.length}`;
+    const message = `Coles: fetched ${deals.length} (${pagesFetched} pages), inserted ${inserted}, updated ${updated}, failed ${errors.length}`;
     await logFetch(supabase, "coles", errors.length === 0, message, {
       fetched: deals.length,
       inserted,
       updated,
+      week_start: weekStart,
+      pages_fetched: pagesFetched,
+      reported_total: reportedTotal,
+      min_expected: MIN_COLES_DEALS,
       errors,
     });
 
     return jsonResponse(
-      { success: errors.length === 0, store: "coles", fetched: deals.length, inserted, updated, errors },
+      {
+        success: errors.length === 0,
+        store: "coles",
+        fetched: deals.length,
+        inserted,
+        updated,
+        pages_fetched: pagesFetched,
+        errors,
+      },
       errors.length === 0 ? 200 : 207,
     );
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown Coles scraper error";
-    await logFetch(supabase, "coles", false, msg, { fetched: 0, inserted: 0, updated: 0, errors: [msg] });
+    await logFetch(supabase, "coles", false, msg, {
+      fetched: 0,
+      inserted: 0,
+      updated: 0,
+      week_start: weekStart,
+      pages_fetched: 0,
+      min_expected: MIN_COLES_DEALS,
+      errors: [msg],
+    });
     return jsonResponse(
       { success: false, store: "coles", fetched: 0, inserted: 0, updated: 0, errors: [msg] },
       502,
