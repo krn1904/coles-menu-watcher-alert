@@ -1,9 +1,10 @@
-name: Daily Deal Scraper
+name: Weekly Deal Scraper
 
 on:
   schedule:
-    # 19:00 UTC = ~5am AEST — after overnight specials refresh; Wednesdays get fresh Woolworths specials
-    - cron: '0 19 * * *'
+    # Wednesday 8:00 AM AEST/AEDT — after Coles/Woolworths weekly specials refresh
+    - cron: '0 8 * * 3'
+      timezone: Australia/Sydney
   workflow_dispatch:
 
 jobs:
