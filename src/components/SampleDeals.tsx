@@ -24,7 +24,8 @@ type ViewMode = "compare" | "browse";
 type StoreFilter = "all" | "coles" | "woolworths";
 type SortMode = "savings" | "discount" | "price" | "name";
 
-const PAGE_SIZE = 12;
+const BROWSE_PAGE_SIZE = 16;
+const COMPARE_PAGE_SIZE = 24;
 
 const SampleDeals: React.FC = () => {
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -163,10 +164,11 @@ const SampleDeals: React.FC = () => {
     return counts;
   }, [deals]);
 
+  const pageSize = viewMode === "compare" ? COMPARE_PAGE_SIZE : BROWSE_PAGE_SIZE;
   const itemCount = viewMode === "compare" ? sortedGroups.length : browseDeals.length;
-  const totalPages = Math.max(1, Math.ceil(itemCount / PAGE_SIZE));
-  const paginatedGroups = sortedGroups.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const paginatedDeals = browseDeals.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(itemCount / pageSize));
+  const paginatedGroups = sortedGroups.slice((page - 1) * pageSize, page * pageSize);
+  const paginatedDeals = browseDeals.slice((page - 1) * pageSize, page * pageSize);
 
   const visibleCategories = CATEGORIES.filter((c) => (categoryCounts.get(c.id) ?? 0) > 0);
 
@@ -277,9 +279,9 @@ const SampleDeals: React.FC = () => {
       )}
 
       {loading ? (
-        <div className="space-y-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-48 w-full rounded-xl" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <Skeleton key={i} className="h-56 w-full rounded-xl" />
           ))}
         </div>
       ) : itemCount === 0 ? (
@@ -287,18 +289,18 @@ const SampleDeals: React.FC = () => {
       ) : (
         <>
           <p className="text-sm text-gray-500 mb-4">
-            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, itemCount)} of {itemCount}
+            Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, itemCount)} of {itemCount}
             {viewMode === "compare" ? " comparisons" : " deals"}
           </p>
 
           {viewMode === "compare" ? (
-            <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
               {paginatedGroups.map((group: ComparisonGroup) => (
                 <ComparisonCard key={group.key} group={group} />
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
               {paginatedDeals.map((deal) => (
                 <DealCard key={deal.id} deal={deal} />
               ))}

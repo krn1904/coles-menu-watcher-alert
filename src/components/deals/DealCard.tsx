@@ -20,7 +20,7 @@ export function DealCard({ deal }: Props) {
   return (
     <Card className="overflow-hidden transition-all hover:shadow-md relative flex flex-col h-full">
       <span className="deal-badge">{deal.discount_percentage ?? 50}% OFF</span>
-      <div className="aspect-square bg-gray-50 flex items-center justify-center p-3 border-b">
+      <div className="aspect-[4/3] bg-gray-50 flex items-center justify-center p-2 border-b">
         <img
           src={deal.image_url || PLACEHOLDER_IMG}
           alt={deal.name}
@@ -28,21 +28,21 @@ export function DealCard({ deal }: Props) {
           loading="lazy"
         />
       </div>
-      <CardContent className="p-4 flex flex-col flex-1">
-        <div className="flex items-center justify-between mb-2 gap-2">
-          <span className="text-xs text-gray-500 truncate">
+      <CardContent className="p-3 flex flex-col flex-1">
+        <div className="flex items-center justify-between mb-1.5 gap-2">
+          <span className="text-[10px] text-gray-500 truncate">
             {cat.emoji} {cat.label}
           </span>
           {store && <StoreBadge store={store} />}
         </div>
-        <h3 className="font-medium line-clamp-2 text-sm flex-1">{deal.name}</h3>
-        <div className="mt-3 flex items-end justify-between gap-2">
+        <h3 className="font-medium line-clamp-2 text-sm flex-1 min-h-[2.5rem]">{deal.name}</h3>
+        <div className="mt-2 flex items-end justify-between gap-2">
           <div>
             <span className="text-xs line-through text-gray-400 block">
               {formatPrice(deal.original_price)}
             </span>
             <span className={cn(
-              "text-lg font-bold",
+              "text-base font-bold",
               store === "coles" ? "text-coles-red" : "text-woolies-green",
             )}>
               {formatPrice(deal.sale_price)}
@@ -52,7 +52,7 @@ export function DealCard({ deal }: Props) {
             {discountLabel(deal.discount_percentage)}
           </span>
         </div>
-        <Button variant="outline" size="sm" className="w-full mt-3" asChild>
+        <Button variant="outline" size="sm" className="w-full mt-2 h-8 text-xs" asChild>
           <a
             href={getStoreSearchUrl(store, deal.name)}
             target="_blank"
