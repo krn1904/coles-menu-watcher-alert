@@ -1,9 +1,10 @@
 import type { Database } from "@/integrations/supabase/types";
 import { CATEGORY_RULES, type CategoryId } from "./categories";
+import { getBrandKeyFromNormalized } from "./brands";
 
 export type Deal = Database["public"]["Tables"]["deals"]["Row"];
 
-export type ComparisonConfidence = "high" | "medium";
+export type ComparisonConfidence = "high" | "medium" | "low";
 
 export type ComparisonGroup = {
   key: string;
@@ -17,24 +18,14 @@ export type ComparisonGroup = {
   savingsAmount?: number;
 };
 
-const MULTI_WORD_BRANDS = [
-  "head shoulders",
-  "oral b",
-  "red rock",
-  "natural confectionery",
-  "m m",
-  "arnotts",
-  "cadbury",
-  "huggies",
-  "finish",
-  "quilton",
-];
-
 const TOKEN_STOPWORDS = new Set([
   "the", "and", "with", "for", "from", "of", "in", "to", "a", "an",
   "pack", "pk", "size", "new", "classic", "original", "ultimate", "gift",
   "share", "block", "bar", "box", "tube", "bottle", "drink", "liquid",
-  "soft", "fresh", "care", "each", "per", "value", "family",
+  "soft", "fresh", "care", "each", "per", "value", "family", "australian",
+  "australia", "style", "cut", "potato", "flavoured", "flavor", "flavour",
+  "range", "selected", "select", "special", "bonus", "extra", "free",
+  "multipack", "multi", "single", "serve", "serving", "approx", "approximate",
 ]);
 
 const DB_CATEGORY_MAP: Array<{ category: CategoryId; pattern: RegExp }> = [
@@ -72,8 +63,10 @@ export function normalizeName(name: string): string {
   return name
     .toLowerCase()
     .replace(/&/g, " and ")
+    .replace(/'/g, "")
     .replace(/ultramen/g, "ultra men")
     .replace(/m&m/g, "m m")
+    .replace(/(\d+)x(\d+)/g, "$1 x $2")
     .replace(/[^a-z0-9 ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -81,7 +74,8 @@ export function normalizeName(name: string): string {
 
 export function getSignificantTokens(name: string): string[] {
   return normalizeName(name)
-    .replace(/\b\d+(\.\d+)?\s?(g|kg|ml|l|pack|pk|x|ct|ea)\b/g, " ")
+    .replace(/\b\d+(\.\d+)?\s?(g|kg|ml|l|litre|liter|pack|pk|x|ct|ea|each)\b/g, " ")
+    .replace(/\b\d+\s?pack\b/g, " ")
     .split(" ")
     .filter((t) => t.length > 1 && !TOKEN_STOPWORDS.has(t));
 }
@@ -91,6 +85,9 @@ export function deriveCategory(name: string, dbCategory?: string | null): Catego
     if (rule.pattern.test(name)) return rule.category;
   }
   if (dbCategory) {
+    for (const rule of CATEGORY_RULES) {
+      if (rule.pattern.test(dbCategory)) return rule.category;
+    }
     for (const rule of DB_CATEGORY_MAP) {
       if (rule.pattern.test(dbCategory)) return rule.category;
     }
@@ -100,11 +97,8 @@ export function deriveCategory(name: string, dbCategory?: string | null): Catego
 
 export function getBrandKey(name: string): string {
   const normalized = normalizeName(name);
-  for (const brand of MULTI_WORD_BRANDS) {
-    if (normalized.startsWith(brand)) return brand;
-  }
   const tokens = getSignificantTokens(name);
-  return tokens[0] || "";
+  return getBrandKeyFromNormalized(normalized, tokens);
 }
 
 export function jaccardScore(a: string[], b: string[]): number {
@@ -123,8 +117,16 @@ export function sharedTokenCount(a: string[], b: string[]): number {
 }
 
 function extractSizeKey(name: string): string | null {
-  const m = normalizeName(name).match(/\b(\d+(\.\d+)?)\s?(g|kg|ml|l|pk|pack|ct)\b/);
+  const m = normalizeName(name).match(/\b(\d+(\.\d+)?)\s?(g|kg|ml|l|pk|pack|ct|ea)\b/);
   return m ? m[0].replace(/\s+/g, "") : null;
+}
+
+function brandsCompatible(a: string, b: string): boolean {
+  if (!a || !b) return true;
+  if (a === b) return true;
+  // smith / smiths after normalization
+  if (a.replace(/s$/, "") === b.replace(/s$/, "")) return true;
+  return a.includes(b) || b.includes(a);
 }
 
 export function scorePair(a: Deal, b: Deal): { score: number; shared: number; confidence: ComparisonConfidence } {
@@ -134,22 +136,52 @@ export function scorePair(a: Deal, b: Deal): { score: number; shared: number; co
   const categoryB = deriveCategory(b.name, b.category);
   const brandA = getBrandKey(a.name);
   const brandB = getBrandKey(b.name);
-
-  if (categoryA !== categoryB) return { score: 0, shared: 0, confidence: "medium" };
   const shared = sharedTokenCount(tokensA, tokensB);
-  if (shared < 2) return { score: 0, shared, confidence: "medium" };
+  const brandMatch = brandsCompatible(brandA, brandB);
+
+  // Brand + at least one other overlapping token (e.g. flavour / product line)
+  const tokensBeyondBrand = shared - (brandMatch && brandA ? 1 : 0);
+  const minShared = brandMatch && brandA ? 1 : 2;
+
+  if (shared < minShared && tokensBeyondBrand < 1) {
+    return { score: 0, shared, confidence: "low" };
+  }
 
   let score = jaccardScore(tokensA, tokensB);
+
+  // Boost brand-aligned pairs
+  if (brandMatch && brandA) score += 0.2;
+  else if (brandA && brandB && !brandMatch) score *= 0.4;
+
+  // Soft category penalty instead of hard reject (stores tag categories differently)
+  if (categoryA !== categoryB) {
+    if (categoryA === "other" || categoryB === "other") score -= 0.05;
+    else score -= 0.15;
+  } else {
+    score += 0.05;
+  }
+
   const sizeA = extractSizeKey(a.name);
   const sizeB = extractSizeKey(b.name);
   if (sizeA && sizeB) {
-    score += sizeA === sizeB ? 0.15 : -0.1;
+    score += sizeA === sizeB ? 0.2 : -0.15;
+  } else if (sizeA || sizeB) {
+    score -= 0.05;
   }
-  if (brandA && brandB && brandA === brandB) score += 0.08;
-  else if (brandA && brandB && brandA !== brandB && score < 0.55) score *= 0.5;
 
-  const confidence: ComparisonConfidence = score >= 0.5 ? "high" : "medium";
-  return { score: Math.min(score, 1), shared, confidence };
+  // Longest shared token run (catches "dairy milk" style phrases)
+  const setB = new Set(tokensB);
+  let run = 0;
+  for (const t of tokensA) if (setB.has(t)) run++;
+  if (run >= 3) score += 0.1;
+
+  score = Math.max(0, Math.min(score, 1));
+
+  let confidence: ComparisonConfidence = "low";
+  if (score >= 0.55) confidence = "high";
+  else if (score >= 0.32) confidence = "medium";
+
+  return { score, shared, confidence };
 }
 
 export function getCheaperStore(
@@ -168,9 +200,18 @@ export function buildComparisonGroups(
   deals: Deal[],
   options: { pairedOnly?: boolean; minScore?: number } = {},
 ): ComparisonGroup[] {
-  const { pairedOnly = false, minScore = 0.35 } = options;
+  const { pairedOnly = false, minScore = 0.28 } = options;
   const colesDeals = deals.filter((d) => d.store === "coles");
   const wooliesDeals = deals.filter((d) => d.store === "woolworths");
+
+  // Index Woolworths by brand bucket for faster + broader matching
+  const wooliesByBrand = new Map<string, Deal[]>();
+  for (const w of wooliesDeals) {
+    const brand = getBrandKey(w.name) || "_unknown";
+    const list = wooliesByBrand.get(brand) ?? [];
+    list.push(w);
+    wooliesByBrand.set(brand, list);
+  }
 
   type Candidate = {
     coles: Deal;
@@ -180,12 +221,29 @@ export function buildComparisonGroups(
   };
 
   const candidates: Candidate[] = [];
+
   for (const coles of colesDeals) {
-    for (const woolworths of wooliesDeals) {
+    const brand = getBrandKey(coles.name);
+    const buckets = new Set<Deal>();
+    if (brand) {
+      for (const w of wooliesByBrand.get(brand) ?? []) buckets.add(w);
+      // Fuzzy brand bucket (smith / smiths)
+      const stem = brand.replace(/s$/, "");
+      for (const [key, list] of wooliesByBrand) {
+        if (key.startsWith(stem) || stem.startsWith(key.replace(/s$/, ""))) {
+          list.forEach((w) => buckets.add(w));
+        }
+      }
+    }
+    // Fallback: compare against all woolies if brand unknown or bucket too small
+    const pool = buckets.size >= 3 ? [...buckets] : wooliesDeals;
+
+    for (const woolworths of pool) {
       const { score, confidence } = scorePair(coles, woolworths);
       if (score >= minScore) candidates.push({ coles, woolworths, score, confidence });
     }
   }
+
   candidates.sort((a, b) => b.score - a.score);
 
   const usedColes = new Set<string>();
@@ -201,7 +259,8 @@ export function buildComparisonGroups(
     const cheaper = getCheaperStore(c.coles, c.woolworths);
     groups.push({
       key: `${c.coles.id}-${c.woolworths.id}`,
-      canonicalName: c.coles.name.length <= c.woolworths.name.length ? c.coles.name : c.woolworths.name,
+      canonicalName:
+        c.coles.name.length <= c.woolworths.name.length ? c.coles.name : c.woolworths.name,
       category,
       confidence: c.confidence,
       matchScore: c.score,
@@ -219,7 +278,7 @@ export function buildComparisonGroups(
         key: `${coles.id}-solo-coles`,
         canonicalName: coles.name,
         category: deriveCategory(coles.name, coles.category),
-        confidence: "medium",
+        confidence: "low",
         matchScore: 0,
         coles,
       });
@@ -230,7 +289,7 @@ export function buildComparisonGroups(
         key: `${woolworths.id}-solo-woolies`,
         canonicalName: woolworths.name,
         category: deriveCategory(woolworths.name, woolworths.category),
-        confidence: "medium",
+        confidence: "low",
         matchScore: 0,
         woolworths,
       });
@@ -250,4 +309,21 @@ export function discountLabel(pct: number | null): string {
   if (n >= 48) return "Half price";
   if (n >= 40) return `${n}% off`;
   return `${n}% off`;
+}
+
+/** Summary stats for UI diagnostics */
+export function getMatchDiagnostics(deals: Deal[]) {
+  const coles = deals.filter((d) => d.store === "coles").length;
+  const woolies = deals.filter((d) => d.store === "woolworths").length;
+  const paired = buildComparisonGroups(deals, { pairedOnly: true });
+  const high = paired.filter((g) => g.confidence === "high").length;
+  const medium = paired.filter((g) => g.confidence === "medium").length;
+  return {
+    coles,
+    woolies,
+    pairedCount: paired.length,
+    highConfidence: high,
+    mediumConfidence: medium,
+    colesMatchedPct: coles > 0 ? Math.round((paired.length / coles) * 100) : 0,
+  };
 }

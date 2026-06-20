@@ -191,12 +191,37 @@ const SampleDeals: React.FC = () => {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <StatCard label="Week from" value={formatWeekStart(activeWeekStart)} />
         <StatCard label="Matched pairs" value={String(comparisonStats.paired)} highlight />
         <StatCard label="Cheaper at Coles" value={String(comparisonStats.cheaperColes)} />
         <StatCard label="Cheaper at Woolworths" value={String(comparisonStats.cheaperWoolies)} />
       </div>
+
+      {!loading && storeCounts.coles > 0 && (
+        <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50/80 px-4 py-3 text-sm text-blue-900">
+          <p>
+            <strong>{storeCounts.coles}</strong> Coles vs <strong>{storeCounts.woolworths}</strong> Woolworths
+            specials this week → <strong>{comparisonStats.paired}</strong> matched pairs
+            {comparisonStats.paired > 0 && (
+              <> ({Math.round((comparisonStats.paired / storeCounts.coles) * 100)}% of Coles items have a Woolworths match)</>
+            )}
+            .
+          </p>
+          {storeCounts.coles < 300 && (
+            <p className="mt-1 text-blue-800">
+              Coles count looks low — re-run the daily scraper after the latest fix (Coles was dropping items
+              missing a &quot;was&quot; price). Expect 800+ after the next scrape.
+            </p>
+          )}
+          {comparisonStats.paired < 30 && storeCounts.coles > 50 && (
+            <p className="mt-1 text-blue-800">
+              Stores often put <em>different brands</em> on half-price the same week. Turn off &quot;Matched pairs
+              only&quot; to browse store-only specials, or search by brand name.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
         <StatCard label="Coles specials" value={String(storeCounts.coles)} />

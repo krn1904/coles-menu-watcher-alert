@@ -1,6 +1,7 @@
 // Coles half-price scrape logic shared by the CI script and local runs.
 import { proxyConfigured, proxiedFetch } from "./proxy.mjs";
 import { categorizeProductName } from "./categorize-product.mjs";
+import { isHalfPriceSpecial, resolveColesPricing } from "./coles-pricing.mjs";
 
 export const HALF_PRICE_BASE = "https://www.coles.com.au/on-special?filter_Special=halfprice";
 export const DEFAULT_ASSETS_URL = "https://cdn.productimages.coles.com.au/productimages";
@@ -68,21 +69,14 @@ export function getProductCategory(product) {
   return "Groceries";
 }
 
-export function isHalfPriceSpecial(product) {
-  const sale = Number(product.pricing?.now || 0);
-  const was = Number(product.pricing?.was || 0);
-  if (!sale || !was || was <= sale) return false;
-  const desc = (product.pricing?.priceDescription || "").toLowerCase();
-  if (desc.includes("1/2") || desc.includes("half")) return true;
-  const savePct = Number(product.pricing?.savePercent || 0);
-  if (savePct >= 45) return true;
-  return was > sale;
-}
+export { isHalfPriceSpecial } from "./coles-pricing.mjs";
 
 export function productToDeal(product, assetsUrl) {
-  const sale = Number(product.pricing?.now || 0);
-  const was = Number(product.pricing?.was || 0);
   if (!isHalfPriceSpecial(product)) return null;
+
+  const pricing = resolveColesPricing(product);
+  if (!pricing) return null;
+  const { sale, was, discount } = pricing;
 
   const name = [product.brand, product.name].filter(Boolean).join(" ").trim() || (product.name ?? "").trim();
   if (!name) return null;
@@ -94,10 +88,6 @@ export function productToDeal(product, assetsUrl) {
     : img.startsWith("http")
       ? img
       : `${assetsUrl}${img.startsWith("/") ? "" : "/"}${img}`;
-
-  const discount = product.pricing?.savePercent
-    ? Math.round(Number(product.pricing.savePercent))
-    : Math.round(((was - sale) / was) * 100);
 
   return {
     name,
@@ -204,6 +194,12 @@ export async function scrapeColesHalfPrice(env, { maxPages = 35, pageDelayMs = 2
   for (const product of rawProducts) {
     const deal = productToDeal(product, assetsUrl);
     if (deal) deals.push(deal);
+  }
+
+  if (rawProducts.length > 0 && deals.length < rawProducts.length * 0.5) {
+    console.warn(
+      `Coles: ${rawProducts.length} raw products → ${deals.length} half-price deals (check pricing fields if low).`,
+    );
   }
 
   if (deals.length === 0) {

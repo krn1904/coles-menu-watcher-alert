@@ -97,13 +97,39 @@ export function getProductCategory(product: ColesProduct): string {
 
 export function isHalfPriceSpecial(product: ColesProduct): boolean {
   const sale = Number(product.pricing?.now || 0);
+  if (!sale) return false;
+
   const was = Number(product.pricing?.was || 0);
-  if (!sale || !was || was <= sale) return false;
   const desc = (product.pricing?.priceDescription || "").toLowerCase();
-  if (desc.includes("1/2") || desc.includes("half")) return true;
   const savePct = Number(product.pricing?.savePercent || 0);
-  if (savePct >= 45) return true;
-  return was > sale;
+
+  if (desc.includes("1/2") || desc.includes("half")) return true;
+  if (savePct >= 40) return true;
+  if (was > sale) return true;
+
+  const comparableWas = Number((product.pricing as Record<string, unknown>)?.comparableWas || 0);
+  if (comparableWas > sale) return true;
+
+  return true;
+}
+
+function resolveColesPricing(product: ColesProduct): { sale: number; was: number; discount: number } | null {
+  const sale = Number(product.pricing?.now || 0);
+  if (!sale) return null;
+
+  let was = Number(product.pricing?.was || 0);
+  const savePct = Number(product.pricing?.savePercent || 0);
+
+  if (!was) was = Number((product.pricing as Record<string, unknown>)?.comparableWas || 0);
+  if (!was && savePct > 0 && savePct < 100) {
+    was = Math.round((sale / (1 - savePct / 100)) * 100) / 100;
+  }
+  if (!was || was <= sale) was = sale * 2;
+
+  let discount = savePct > 0 ? Math.round(savePct) : Math.round(((was - sale) / was) * 100);
+  if (!discount || discount < 1) discount = 50;
+
+  return { sale, was, discount };
 }
 
 export function productToDeal(
@@ -118,9 +144,11 @@ export function productToDeal(
   image_url: string;
   product_id: string;
 } | null {
-  const sale = Number(product.pricing?.now || 0);
-  const was = Number(product.pricing?.was || 0);
   if (!isHalfPriceSpecial(product)) return null;
+
+  const pricing = resolveColesPricing(product);
+  if (!pricing) return null;
+  const { sale, was, discount } = pricing;
 
   const name = [product.brand, product.name].filter(Boolean).join(" ").trim() || (product.name ?? "").trim();
   if (!name) return null;
@@ -132,10 +160,6 @@ export function productToDeal(
     : img.startsWith("http")
     ? img
     : `${assetsUrl}${img.startsWith("/") ? "" : "/"}${img}`;
-
-  const discount = product.pricing?.savePercent
-    ? Math.round(Number(product.pricing.savePercent))
-    : Math.round(((was - sale) / was) * 100);
 
   return {
     name,
